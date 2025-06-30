@@ -1,0 +1,11 @@
+[project]
+name = "pgrestcue"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.14",
+    "psycopg>=3.2.9",
+    "sqlmodel>=0.0.24",
+]
