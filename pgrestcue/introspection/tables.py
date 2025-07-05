@@ -1,6 +1,9 @@
+import logging
 from datetime import datetime
-from typing import Any, Optional, TYPE_CHECKING
+from functools import lru_cache
+from typing import Any, Optional, TYPE_CHECKING, Tuple
 
+from pydantic import BaseModel
 from sqlalchemy import ARRAY, BigInteger, Boolean, Column, DateTime, Index, Integer, LargeBinary, PrimaryKeyConstraint, \
     REAL, SmallInteger, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import OID
@@ -9,6 +12,7 @@ from sqlmodel import Field, SQLModel
 
 if TYPE_CHECKING:
     from pgrestcue.introspection.introspection import Introspection
+    from pgrestcue.introspection.acl import AclObject
 
 RESERVED_WORDS = [
     "ABS",
@@ -574,11 +578,28 @@ class PgAttribute(SQLModel, table=True):
     attfdwoptions: Optional[list] = Field(default=None, sa_column=Column('attfdwoptions', ARRAY(Text())))
     attmissingval: Optional[Any] = Field(default=None, sa_column=Column('attmissingval', NullType))
 
-    def get_class(self, introspection: "Introspection"):
-        return filter(lambda x: x.relnamespace == self.attrelid, introspection.classes)
+    def get_class(self, introspection: "Introspection") -> Optional["PgClass"]:
+        return next(filter(lambda x: x.relnamespace == self.attrelid, introspection.classes))
 
-    def get_type(self, introspection: "Introspection"):
+    def get_type(self, introspection: "Introspection") -> Optional["PgType"]:
         return introspection.get_type(self.atttypid)
+
+    def get_description(self, introspection: "Introspection") -> Optional[str]:
+        return introspection.get_description(introspection.PG_CLASS, self.attrelid, self.attnum)
+
+    def get_tags_and_description(self, introspection: "Introspection") -> Tuple[list, Optional[str]]:
+        tags = introspection.get_tags(introspection.PG_CLASS, self.attrelid, self.attnum)
+        description = introspection.get_description(introspection.PG_CLASS, self.attrelid, self.attnum)
+        return tags, description
+
+    def get_tags(self, introspection: "Introspection"):
+        return self.get_tags_and_description(introspection)[0]
+
+    def get_acl(self, introspection: "Introspection") -> Optional["AclObject"]:
+        """
+        Get the ACL (Access Control List) for this attribute.
+        """
+        return introspection.get_acl(introspection.PG_CLASS, self.attrelid, self.attnum)
 
 
 class PgAuthMembers(SQLModel, table=True):
@@ -683,47 +704,49 @@ class PgClass(SQLModel, table=True):
 
     _type: str = "PgClass"
 
-    def get_namespace(self, introspection):
+    def get_namespace(self, introspection: "Introspection") -> "PgNamespace":
         return introspection.get_namespace(self.relnamespace)
 
-    def get_type(self, introspection):
+    def get_type(self, introspection: "Introspection") -> "PgType":
         return introspection.get_type(self.reltype)
 
-    def get_of_type(self, introspection):
+    def get_of_type(self, introspection: "Introspection") -> Optional["PgType"]:
         return introspection.get_type(self.reloftype)
 
-    def get_owner(self, introspection):
+    def get_owner(self, introspection: "Introspection") -> "PgRoles":
         return introspection.get_role(self.relowner)
 
-    def get_attributes(self, introspection) -> list["PgAttribute"]:
+    def get_attributes(self, introspection: "Introspection") -> list["PgAttribute"]:
         return introspection.get_attributes(self.oid)
 
-    def get_constraints(self, introspection):
+    def get_constraints(self, introspection: "Introspection") -> list["PgConstraint"]:
         return introspection.get_constraints(self.oid)
 
-    def get_foreign_constraints(self, introspection):
+    def get_foreign_constraints(self, introspection: "Introspection") -> list["PgConstraint"]:
         return introspection.get_foreign_constraints(self.oid)
 
-    def get_indexes(self, introspection):
+    def get_indexes(self, introspection: "Introspection") -> list["PgIndex"]:
         return introspection.get_indexes(self.oid)
 
-    def get_description(self, introspection, PG_CLASS):
+    def get_description(self, introspection: "Introspection", PG_CLASS) -> Optional[str]:
         return introspection.get_description(PG_CLASS, self.oid, 0)
 
-    def get_tags_and_description(self, introspection, PG_CLASS, PG_TYPE):
+    def get_tags_and_description(self, introspection: "Introspection", PG_CLASS, PG_TYPE) -> Optional[dict]:
         return introspection.get_tags_and_description(
             PG_CLASS, self.oid, 0, {"classoid": PG_TYPE, "objoid": self.reltype}
         )
 
-    def get_tags(self, introspection, PG_CLASS, PG_TYPE):
+    def get_tags(self, introspection: "Introspection", PG_CLASS, PG_TYPE) -> Optional[list]:
         tags_and_desc = self.get_tags_and_description(introspection, PG_CLASS, PG_TYPE)
         return tags_and_desc.get('tags') if tags_and_desc else None
 
-    def get_acl(self, introspection, parse_acls, OBJECT_TABLE, OBJECT_SEQUENCE):
+    def get_acl(self, introspection: "Introspection", OBJECT_TABLE, OBJECT_SEQUENCE) -> list["AclObject"]:
+        from pgrestcue.introspection.acl import parse_acls
+
         objtype = OBJECT_SEQUENCE if getattr(self, 'relkind', None) == "S" else OBJECT_TABLE
         return parse_acls(introspection, self.relacl, self.relowner, objtype)
 
-    def get_attribute(self, by, introspection):
+    def get_attribute(self, by, introspection: "Introspection") -> Optional["PgAttribute"]:
         attributes = self.get_attributes(introspection)
         if 'number' in by and by['number']:
             return next((att for att in attributes if getattr(att, 'attnum', None) == by['number']), None)
@@ -731,10 +754,10 @@ class PgClass(SQLModel, table=True):
             return next((att for att in attributes if getattr(att, 'attname', None) == by['name']), None)
         return None
 
-    def get_inherited(self, introspection):
+    def get_inherited(self, introspection: "Introspection") -> list["PgInherits"]:
         return [inh for inh in introspection.inherits if getattr(inh, 'inhrelid', None) == self.oid]
 
-    def get_access_method(self, introspection):
+    def get_access_method(self, introspection: "Introspection") -> Optional["PgAm"]:
         if self.relam is not None:
             return next((am for am in introspection.am if getattr(am, 'oid', None) == self.relam), None)
         return None
@@ -800,6 +823,76 @@ class PgConstraint(SQLModel, table=True):
     conexclop: Optional[list] = Field(default=None, sa_column=Column('conexclop', ARRAY(OID())))
     conbin: Optional[Any] = Field(default=None, sa_column=Column('conbin', NullType))
 
+    def get_namespace(self, introspection: "Introspection") -> "PgNamespace":
+        return introspection.get_namespace(self.connamespace)
+
+    def get_class(self, introspection: "Introspection") -> Optional["PgClass"]:
+        return introspection.get_class(self.conrelid)
+
+    def get_attributes(self, introspection: "Introspection") -> list["PgAttribute"] | None:
+        """
+        Get the attributes associated with this constraint.
+        """
+        klass = self.get_class(introspection)
+        if not klass:
+            logging.warning(
+                f"get_attributes called on constraint {self.oid} with no class found for conrelid {self.conrelid}")
+            return []
+        if not self.conkey:
+            if self.contype == 'f':
+                return []
+            else:
+                return None
+
+        attrs = klass.get_attributes(introspection)
+        return [attr for key in self.conkey for attr in attrs if attr.attnum == key]
+
+    def get_type(self, introspection: "Introspection") -> Optional["PgType"]:
+        """
+        Get the type associated with this constraint.
+        """
+        return introspection.get_type(self.contypid)
+
+    def get_foreign_class(self, introspection: "Introspection") -> Optional["PgClass"]:
+        """
+        Get the foreign class associated with this constraint, if it is a foreign key.
+        """
+        return introspection.get_class(self.confrelid)
+
+    def get_foreign_attributes(self, introspection: "Introspection") -> list["PgAttribute"] | None:
+        """
+        Get the foreign attributes associated with this constraint, if it is a foreign key.
+        """
+        foreign_class = self.get_foreign_class(introspection)
+        if not foreign_class:
+            logging.warning(
+                f"get_foreign_attributes called on constraint {self.oid} with no foreign class found for confrelid {self.confrelid}")
+            return []
+        if not self.confkey:
+            return None
+
+        attrs = foreign_class.get_attributes(introspection)
+        return [attr for key in self.confkey for attr in attrs if attr.attnum == key]
+
+    def get_description(self, introspection: "Introspection") -> Optional[str]:
+        """
+        Get the description of this constraint.
+        """
+        return introspection.get_description(introspection.PG_CONSTRAINT, self.oid, 0)
+
+    def get_tags_and_description(self, introspection: "Introspection") -> Optional[dict]:
+        """
+        Get the tags and description of this constraint.
+        """
+        return introspection.get_tags_and_description(introspection.PG_CONSTRAINT, self.oid)
+
+    def get_tags(self, introspection: "Introspection") -> Optional[list]:
+        """
+        Get the tags associated with this constraint.
+        """
+        tags_and_desc = self.get_tags_and_description(introspection)
+        return tags_and_desc.get('tags') if tags_and_desc else None
+
 
 class PgConversion(SQLModel, table=True):
     __tablename__ = 'pg_conversion'
@@ -849,12 +942,12 @@ class PgDatabase(SQLModel, table=True):
 
     _type: str = "PgDatabase"
 
-    def get_owner(self, introspection) -> Any:
+    def get_owner(self, introspection: "Introspection") -> Any:
         return introspection.get_role(self.datdba)
 
-    get_dba = get_owner
-
-    def get_acl(self, introspection, OBJECT_DATABASE, parse_acls) -> Any:
+    @lru_cache()
+    def get_acl(self, introspection: "Introspection", OBJECT_DATABASE) -> Any:
+        from pgrestcue.introspection.acl import parse_acls
         return parse_acls(
             introspection,
             self.datacl,
@@ -935,6 +1028,25 @@ class PgEnum(SQLModel, table=True):
     enumtypid: Any = Field(sa_column=Column('enumtypid', OID))
     enumsortorder: float = Field(sa_column=Column('enumsortorder', REAL))
     enumlabel: str = Field(sa_column=Column('enumlabel', String))
+
+    def get_type(self, introspection: "Introspection") -> Optional["PgType"]:
+        """
+        Get the type associated with this enum.
+        """
+        return introspection.get_type(self.enumtypid)
+
+    def get_tags_and_description(self, introspection: "Introspection") -> Optional[dict]:
+        """
+        Get the tags and description of this enum.
+        """
+        return introspection.get_tags_and_description(introspection.PG_ENUM, self.oid)
+
+    def get_tags(self, introspection: "Introspection") -> Optional[list]:
+        """
+        Get the tags associated with this enum.
+        """
+        tags_and_desc = self.get_tags_and_description(introspection)
+        return tags_and_desc.get('tags') if tags_and_desc else None
 
 
 class PgEventTrigger(SQLModel, table=True):
@@ -1051,13 +1163,13 @@ class PgIndex(SQLModel, table=True):
 
     _type: str = "PgIndex"
 
-    def get_index_class(self, introspection):
+    def get_index_class(self, introspection: "Introspection") -> "PgClass":
         return introspection.get_class(self.indexrelid)
 
-    def get_class(self, introspection):
+    def get_class(self, introspection: "Introspection") -> Optional["PgClass"]:
         return introspection.get_class(self.indrelid)
 
-    def get_keys(self, introspection):
+    def get_keys(self, introspection: "Introspection") -> list[Optional["PgAttribute"]]:
         owner = self.get_class(introspection)
         attrs = owner.get_attributes(introspection) if owner else []
         keys = self.indkey if hasattr(self, 'indkey') else []
@@ -1151,33 +1263,34 @@ class PgNamespace(SQLModel, table=True):
 
     _type: str = "PgNamespace"
 
-    def get_owner(self, introspection):
+    def get_owner(self, introspection: "Introspection"):
         return introspection.get_role(self.nspowner)
 
-    def get_description(self, introspection, PG_NAMESPACE):
+    def get_description(self, introspection: "Introspection", PG_NAMESPACE):
         return introspection.get_description(PG_NAMESPACE, self.oid)
 
-    def get_tags_and_description(self, introspection, PG_NAMESPACE):
+    def get_tags_and_description(self, introspection: "Introspection", PG_NAMESPACE):
         return introspection.get_tags_and_description(PG_NAMESPACE, self.oid)
 
-    def get_tags(self, introspection, PG_NAMESPACE):
+    def get_tags(self, introspection: "Introspection", PG_NAMESPACE):
         tags_and_desc = self.get_tags_and_description(introspection, PG_NAMESPACE)
         return tags_and_desc.get('tags') if tags_and_desc else None
 
-    def get_acl(self, introspection, parse_acls, OBJECT_SCHEMA):
+    def get_acl(self, introspection: "Introspection", OBJECT_SCHEMA):
+        from pgrestcue.introspection.acl import parse_acls
         return parse_acls(introspection, self.nspacl, self.nspowner, OBJECT_SCHEMA)
 
-    def get_class(self, introspection, by):
+    def get_class(self, introspection: "Introspection", by):
         return next((child for child in introspection.classes if
                      getattr(child, 'relnamespace', None) == self.oid and getattr(child, 'relname', None) == by.get(
                          'name')), None)
 
-    def get_constraint(self, introspection, by):
+    def get_constraint(self, introspection: "Introspection", by):
         return next((child for child in introspection.constraints if
                      getattr(child, 'connamespace', None) == self.oid and getattr(child, 'conname', None) == by.get(
                          'name')), None)
 
-    def get_procs(self, introspection, by):
+    def get_procs(self, introspection: "Introspection", by):
         return [child for child in introspection.procs if
                 getattr(child, 'pronamespace', None) == self.oid and getattr(child, 'proname', None) == by.get('name')]
 
@@ -1289,6 +1402,15 @@ class PgPolicy(SQLModel, table=True):
     polwithcheck: Optional[Any] = Field(default=None, sa_column=Column('polwithcheck', NullType))
 
 
+class ProcArgument(BaseModel):
+    is_in: bool
+    is_out: bool
+    is_variadic: bool
+    has_default: bool
+    typ: Optional["PgType"]
+    name: Optional[str]
+
+
 class PgProc(SQLModel, table=True):
     __tablename__ = 'pg_proc'
     __table_args__ = (
@@ -1327,6 +1449,63 @@ class PgProc(SQLModel, table=True):
     prosqlbody: Optional[Any] = Field(default=None, sa_column=Column('prosqlbody', NullType))
     proconfig: Optional[list] = Field(default=None, sa_column=Column('proconfig', ARRAY(Text())))
     proacl: Optional[Any] = Field(default=None, sa_column=Column('proacl', NullType))
+
+    def get_namespace(self, introspection: "Introspection") -> Optional[PgNamespace]:
+        return introspection.get_namespace(self.pronamespace)
+
+    def get_owner(self, introspection: "Introspection") -> Any:
+        return introspection.get_role(self.proowner)
+
+    def get_return_type(self, introspection: "Introspection") -> Optional["PgType"]:
+        return introspection.get_type(self.prorettype)
+
+    def get_description(self, introspection: "Introspection", PG_PROC) -> Optional[str]:
+        return introspection.get_description(PG_PROC, self.oid)
+
+    def get_tags_and_description(self, introspection: "Introspection", PG_PROC) -> Optional[dict]:
+        return introspection.get_tags_and_description(PG_PROC, self.oid)
+
+    def get_tags(self, introspection: "Introspection", PG_PROC) -> Optional[list]:
+        tags_and_desc = self.get_tags_and_description(introspection, PG_PROC)
+        return tags_and_desc.get('tags') if tags_and_desc else None
+
+    def get_arguments(self, introspection: "Introspection") -> list[ProcArgument]:
+        args: list[ProcArgument] = list()
+        for arglist in (self.proargtypes, self.proallargtypes):
+            if not arglist:
+                continue
+
+            for idx, type_id in enumerate(arglist):
+                typ = introspection.get_type(type_id)
+                if not typ:
+                    raise ValueError(f"Argument type with OID {type_id} not found in introspection data.")
+                mode = self.progarmodes[idx] or 'i'
+                is_in = mode in ('i', 'b', 'v')
+                is_out = mode in ('o', 'b', 'v')
+                is_variadic = mode == 'v'
+                has_default = idx >= len(arglist) - self.pronargdefaults if self.proargdefaults else False
+                name = self.proargnames[idx] or None
+
+                args.append(
+                    ProcArgument(
+                        is_in=is_in,
+                        is_out=is_out,
+                        is_variadic=is_variadic,
+                        has_default=has_default,
+                        typ=typ,
+                        name=name
+                    )
+                )
+        return args
+
+    def get_acl(self, introspection: "Introspection") -> Any:
+        from pgrestcue.introspection.acl import parse_acls, OBJECT_FUNCTION
+        return parse_acls(
+            introspection,
+            self.proacl,
+            self.proowner,
+            OBJECT_FUNCTION,
+        )
 
 
 class PgPublication(SQLModel, table=True):
@@ -1392,6 +1571,18 @@ class PgRange(SQLModel, table=True):
     rngsubopc: Any = Field(sa_column=Column('rngsubopc', OID))
     rngcanonical: Any = Field(sa_column=Column('rngcanonical', NullType))
     rngsubdiff: Any = Field(sa_column=Column('rngsubdiff', NullType))
+
+    def get_type(self, introspection: "Introspection") -> Optional["PgType"]:
+        """
+        Get the type associated with this range.
+        """
+        return introspection.get_type(self.rngtypid)
+
+    def get_subtype(self, introspection: "Introspection") -> Optional["PgType"]:
+        """
+        Get the subtype associated with this range.
+        """
+        return introspection.get_type(self.rngsubtype)
 
 
 class PgReplicationOrigin(SQLModel, table=True):
@@ -1792,6 +1983,39 @@ class PgType(SQLModel, table=True):
     typdefaultbin: Optional[Any] = Field(default=None, sa_column=Column('typdefaultbin', NullType))
     typdefault: Optional[str] = Field(default=None, sa_column=Column('typdefault', Text))
     typacl: Optional[Any] = Field(default=None, sa_column=Column('typacl', NullType))
+
+    def get_namespace(self, introspection: "Introspection") -> Optional["PgNamespace"]:
+        return introspection.get_namespace(self.typnamespace)
+
+    def get_owner(self, introspection: "Introspection") -> Any:
+        return introspection.get_role(self.typowner)
+
+    def get_class(self, introspection: "Introspection") -> Optional["PgClass"]:
+        return introspection.get_class(self.typrelid)
+
+    def get_elem_type(self, introspection: "Introspection") -> Optional["PgType"]:
+        return introspection.get_type(self.typelem)
+
+    def get_array_type(self, introspection: "Introspection") -> Optional["PgType"]:
+        """Returns the array type of this type, if applicable."""
+        return introspection.get_type(self.typarray)
+
+    def get_enum_values(self, introspection: "Introspection") -> Optional[list]:
+        return introspection.get_enums(self.oid)
+
+    def get_range(self, introspection: "Introspection") -> Optional["PgRange"]:
+        """Returns the range type associated with this type, if applicable."""
+        return introspection.get_range(self.oid)
+
+    def get_description(self, introspection: "Introspection") -> Optional[str]:
+        return introspection.get_description(introspection.PG_TYPE, self.oid)
+
+    def get_tags_and_description(self, introspection: "Introspection") -> Optional[dict]:
+        return introspection.get_tags_and_description(introspection.PG_TYPE, self.oid)
+
+    def get_tags(self, introspection: "Introspection") -> Optional[list]:
+        tags_and_desc = self.get_tags_and_description(introspection)
+        return tags_and_desc.get('tags') if tags_and_desc else None
 
 
 class PgUserMapping(SQLModel, table=True):

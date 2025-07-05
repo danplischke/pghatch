@@ -1,5 +1,5 @@
 import logging
-
+from typing import Any
 from pydantic import BaseModel
 from psycopg import connect
 
@@ -30,15 +30,62 @@ class Introspection(BaseModel):
     am: list['PgAm']
 
     catalog_by_oid: dict[str, str]
+    oid_by_catalog: dict[str, str] = {}
 
     current_user: str
     pg_version: str
     introspection_version: int = 1
 
-    @property
-    def oid_by_catalog(self) -> dict[str, str]:
-        """Return a mapping from catalog name to OID."""
-        return {catalog: oid for oid, catalog in self.catalog_by_oid.items()}
+    include_extension_resources: bool = True
+
+    PG_NAMESPACE: str | None = None
+    PG_CLASS: str | None = None
+    PG_PROC: str | None = None
+    PG_TYPE: str | None = None
+    PG_CONSTRAINT: str | None = None
+    PG_EXTENSION: str | None = None
+
+    @classmethod
+    def del_items(cls, delete: list[Any], collection: list[Any], attr: str) -> None:
+        for del_item in delete:
+            for item in collection:
+                if getattr(item, attr, None) == del_item:
+                    collection.remove(item)
+
+    def model_post_init(self, __context):
+        """Post-initialization to set up catalog mappings."""
+        self.oid_by_catalog = {catalog: oid for oid, catalog in self.catalog_by_oid.items()}
+
+        self.PG_NAMESPACE = self.oid_by_catalog.get("pg_namespace")
+        self.PG_CLASS = self.oid_by_catalog.get("pg_class")
+        self.PG_PROC = self.oid_by_catalog.get("pg_proc")
+        self.PG_TYPE = self.oid_by_catalog.get("pg_type")
+        self.PG_CONSTRAINT = self.oid_by_catalog.get("pg_constraint")
+
+        if not all([self.PG_NAMESPACE, self.PG_CLASS, self.PG_PROC, self.PG_TYPE, self.PG_CONSTRAINT]):
+            raise ValueError(
+                "Invalid introspection results; could not determine the ids of the system catalogs"
+            )
+
+        if not self.include_extension_resources:
+            extension_proc_oids = set()
+            extension_class_oids = set()
+
+            for dependency in self.depends:
+                if dependency.deptype == 'e' and self.oid_by_catalog.get("pg_extension") == dependency.refclassid:
+                    if dependency.classid == self.oid_by_catalog.get('pg_proc'):
+                        extension_proc_oids.add(dependency.objid)
+                    elif dependency.classid == self.oid_by_catalog.get('pg_class'):
+                        extension_class_oids.add(dependency.objid)
+
+            extension_proc_oids = list(extension_proc_oids)
+            extension_class_oids = list(extension_class_oids)
+            self.del_items(extension_proc_oids, self.procs, 'oid')
+            self.del_items(extension_class_oids, self.classes, 'oid')
+            self.del_items(extension_class_oids, self.attributes, 'attrelid')
+            self.del_items(extension_class_oids, self.constraints, 'conrelid')
+            self.del_items(extension_class_oids, self.constraints, 'confrelid')
+            self.del_items(extension_class_oids, self.type, 'typrelid')
 
     def get_role(self, oid: str | None = None) -> 'PgRoles | None':
         """Get a role by its OID."""
@@ -407,7 +454,6 @@ TYPEMAP = {
     "interval": str,  # Use str for interval; can be parsed later
 }
 
-
 from sqlalchemy import BOOLEAN, String, Date, DateTime, Time, Interval
 
 ALCHEMY_TYPEMAP = {
@@ -429,16 +475,16 @@ ALCHEMY_TYPEMAP = {
     "interval": Interval,  # Use Interval for interval; can be parsed later
 }
 
-
 if __name__ == '__main__':
     from pydantic import create_model
     from sqlmodel import Field, Session, SQLModel, ARRAY, select
-    from typing import Optional
+    from typing import Optional, Any
     from sqlalchemy import Column, create_engine
 
     from sqlalchemy import Table, event
     from sqlalchemy.ext.compiler import compiles
     from sqlalchemy import Integer
+
 
     class RowID(Column):
         pass
@@ -456,6 +502,7 @@ if __name__ == '__main__':
             # this is untested for writing stuff - likely wont work
             logging.info("No pkey defined for table, using rownumber %s", target)
             target.append_column(RowID('row_id', Integer, primary_key=True))
+
 
     introspection = make_introspection_query()
     for tablelike in introspection.classes:
@@ -480,12 +527,12 @@ if __name__ == '__main__':
                 attr_type = (attr_type, Field(sa_column=Column(ARRAY(alchemy_type), nullable=is_nullable)))
                 field_definitions[attr.attname] = attr_type
             else:
-                attr_type = (attr_type, Field(sa_column=Column(alchemy_type, nullable=is_nullable, primary_key=is_primary_key)))
+                attr_type = (attr_type,
+                             Field(sa_column=Column(alchemy_type, nullable=is_nullable, primary_key=is_primary_key)))
                 field_definitions[attr.attname] = attr_type
 
             print(
                 f"  Attribute: {attr.attname} (Type: {introspection.get_type(attr.atttypid).typname}, Nullable: {is_nullable})")
-
 
         field_definitions["row_id"] = (int, Field(sa_column=RowID(nullable=False, primary_key=True)))
 

@@ -1,7 +1,9 @@
-from typing import List, Dict, Optional, Any, TypedDict, Union
-from dataclasses import dataclass, field
-from pgrestcue.introspection.introspection import Introspection
+from dataclasses import dataclass
+from typing import List, Dict, Optional, Any, TYPE_CHECKING
 from pgrestcue.introspection.tables import PgRoles
+
+if TYPE_CHECKING:
+    from pgrestcue.introspection.introspection import Introspection
 
 OBJECT_COLUMN = "OBJECT_COLUMN"
 OBJECT_TABLE = "OBJECT_TABLE"
@@ -132,7 +134,7 @@ def parse_identifier(s: str) -> str:
         return s[1:-1].replace('""', '"')
     return s
 
-def get_role(introspection: Introspection, oid: str) -> PgRoles:
+def get_role(introspection: "Introspection", oid: str) -> PgRoles:
     if oid == "0":
         return PUBLIC_ROLE
     for role in introspection.roles:
@@ -140,7 +142,7 @@ def get_role(introspection: Introspection, oid: str) -> PgRoles:
             return role
     raise ValueError(f"Could not find role with identifier '{oid}'")
 
-def get_role_by_name(introspection: Introspection, name: str) -> PgRoles:
+def get_role_by_name(introspection: "Introspection", name: str) -> PgRoles:
     if name == "public":
         return PUBLIC_ROLE
     for role in introspection.roles:
@@ -195,7 +197,7 @@ def serialize_acl(acl: AclObject) -> str:
 empty_acl_object = parse_acl("=/postgres")
 
 def parse_acls(
-    introspection: Introspection,
+    introspection: "Introspection",
     in_acls: Optional[List[str]],
     owner_id: str,
     objtype: str,
@@ -280,7 +282,7 @@ Permission = {
 }
 
 def expand_roles(
-    introspection: Introspection,
+    introspection: "Introspection",
     roles: List[PgRoles],
     include_no_inherit: bool = False,
 ) -> List[PgRoles]:
@@ -298,7 +300,7 @@ def expand_roles(
     return all_roles
 
 def acl_contains_role(
-    introspection: Introspection,
+    introspection: "Introspection",
     acl: AclObject,
     role: PgRoles,
     include_no_inherit: bool = False,
@@ -308,7 +310,7 @@ def acl_contains_role(
     return acl_role in expanded_roles
 
 def resolve_permissions(
-    introspection: Introspection,
+    introspection: "Introspection",
     acls: List[AclObject],
     role: PgRoles,
     include_no_inherit: bool = False,
@@ -327,7 +329,7 @@ def resolve_permissions(
     return permissions
 
 def entity_permissions(
-    introspection: Introspection,
+    introspection: "Introspection",
     entity: Any,  # Should have get_acl() and get_owner() or getClass().getOwner()
     role: PgRoles,
     include_no_inherit: bool = False,
