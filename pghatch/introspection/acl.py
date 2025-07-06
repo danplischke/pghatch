@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Any, TYPE_CHECKING
-from pgrestcue.introspection.tables import PgRoles
+from pghatch.introspection.tables import PgRoles
 
 if TYPE_CHECKING:
-    from pgrestcue.introspection.introspection import Introspection
+    from pghatch.introspection.introspection import Introspection
 
 OBJECT_COLUMN = "OBJECT_COLUMN"
 OBJECT_TABLE = "OBJECT_TABLE"
@@ -64,7 +64,7 @@ PUBLIC_ROLE = PgRoles(
     rolbypassrls=False,
     rolconfig=None,
     rolvaliduntil=None,
-    oid="0"
+    oid="0",
 )
 
 # Permission mapping
@@ -85,9 +85,9 @@ ACL_MAP = {
 }
 
 ACL_MAP_ENTRIES = sorted(
-    ACL_MAP.items(),
-    key=lambda item: ACL_ALL_RIGHTS_STR.index(item[0])
+    ACL_MAP.items(), key=lambda item: ACL_ALL_RIGHTS_STR.index(item[0])
 )
+
 
 @dataclass
 class AclObject:
@@ -120,6 +120,7 @@ class AclObject:
     maintain: bool = False
     maintainGrant: bool = False
 
+
 ResolvedPermissions = Dict[str, bool]
 
 # NO_PERMISSIONS
@@ -127,28 +128,34 @@ NO_PERMISSIONS = AclObject(role="public", granter="")
 
 # parseIdentifier
 
+
 def parse_identifier(s: str) -> str:
     if s.startswith('"'):
         if not s.endswith('"'):
-            raise ValueError('Invalid identifier - if it starts with \" it must also end with \"')
+            raise ValueError(
+                'Invalid identifier - if it starts with " it must also end with "'
+            )
         return s[1:-1].replace('""', '"')
     return s
+
 
 def get_role(introspection: "Introspection", oid: str) -> PgRoles:
     if oid == "0":
         return PUBLIC_ROLE
     for role in introspection.roles:
-        if getattr(role, 'oid', None) == oid or getattr(role, '_id', None) == oid:
+        if getattr(role, "oid", None) == oid or getattr(role, "_id", None) == oid:
             return role
     raise ValueError(f"Could not find role with identifier '{oid}'")
+
 
 def get_role_by_name(introspection: "Introspection", name: str) -> PgRoles:
     if name == "public":
         return PUBLIC_ROLE
     for role in introspection.roles:
-        if getattr(role, 'rolname', None) == name:
+        if getattr(role, "rolname", None) == name:
             return role
     raise ValueError(f"Could not find role with name '{name}'")
+
 
 def parse_acl(acl_string: str) -> AclObject:
     if len(acl_string) < 3:
@@ -172,17 +179,23 @@ def parse_acl(acl_string: str) -> AclObject:
             return acl
         perm = ACL_MAP.get(char)
         if perm is None:
-            raise ValueError(f"Could not parse ACL string '{acl_string}' - unsupported permission '{char}'")
+            raise ValueError(
+                f"Could not parse ACL string '{acl_string}' - unsupported permission '{char}'"
+            )
         setattr(acl, perm, True)
         if i < last_character_index and acl_string[i + 1] == "*":
             i += 1
             setattr(acl, f"{perm}Grant", True)
-    raise ValueError(f"Invalid or unsupported ACL string '{acl_string}' - no '/' character?")
+    raise ValueError(
+        f"Invalid or unsupported ACL string '{acl_string}' - no '/' character?"
+    )
+
 
 def escape_role(role: str) -> str:
     if '"' in role:
         return f'"{role.replace('"', '""')}"'
     return role
+
 
 def serialize_acl(acl: AclObject) -> str:
     permissions = ("" if acl.role == "public" else escape_role(acl.role)) + "="
@@ -194,7 +207,9 @@ def serialize_acl(acl: AclObject) -> str:
     permissions += f"/{escape_role(acl.granter)}"
     return permissions
 
+
 empty_acl_object = parse_acl("=/postgres")
+
 
 def parse_acls(
     introspection: "Introspection",
@@ -252,6 +267,7 @@ def parse_acls(
         acl_strings = acl
     return [parse_acl(s) for s in acl_strings]
 
+
 Permission = {
     "select": "select",
     "selectGrant": "selectGrant",
@@ -281,23 +297,29 @@ Permission = {
     "maintainGrant": "maintainGrant",
 }
 
+
 def expand_roles(
     introspection: "Introspection",
     roles: List[PgRoles],
     include_no_inherit: bool = False,
 ) -> List[PgRoles]:
     all_roles = [PUBLIC_ROLE]
+
     def add_role(member: PgRoles):
         if member not in all_roles:
             all_roles.append(member)
-            if include_no_inherit or getattr(member, 'rolinherit', True):
+            if include_no_inherit or getattr(member, "rolinherit", True):
                 for am in introspection.auth_members:
-                    if getattr(am, 'member', None) == getattr(member, 'oid', None) or getattr(am, 'member', None) == getattr(member, '_id', None):
-                        rol = get_role(introspection, getattr(am, 'roleid', None))
+                    if getattr(am, "member", None) == getattr(
+                        member, "oid", None
+                    ) or getattr(am, "member", None) == getattr(member, "_id", None):
+                        rol = get_role(introspection, getattr(am, "roleid", None))
                         add_role(rol)
+
     for r in roles:
         add_role(r)
     return all_roles
+
 
 def acl_contains_role(
     introspection: "Introspection",
@@ -309,6 +331,7 @@ def acl_contains_role(
     expanded_roles = expand_roles(introspection, [role], include_no_inherit)
     return acl_role in expanded_roles
 
+
 def resolve_permissions(
     introspection: "Introspection",
     acls: List[AclObject],
@@ -317,7 +340,7 @@ def resolve_permissions(
     is_owner_and_has_no_explicit_acls: bool = False,
 ) -> ResolvedPermissions:
     expanded_roles = expand_roles(introspection, [role], include_no_inherit)
-    is_superuser = any(getattr(r, 'rolsuper', False) for r in expanded_roles)
+    is_superuser = any(getattr(r, "rolsuper", False) for r in expanded_roles)
     grant_all = is_superuser or is_owner_and_has_no_explicit_acls
     permissions = {k: grant_all for k in Permission}
     if grant_all:
@@ -328,6 +351,7 @@ def resolve_permissions(
                 permissions[k] = permissions[k] or getattr(acl, k, False)
     return permissions
 
+
 def entity_permissions(
     introspection: "Introspection",
     entity: Any,  # Should have get_acl() and get_owner() or getClass().getOwner()
@@ -336,20 +360,29 @@ def entity_permissions(
 ) -> ResolvedPermissions:
     acls = entity.get_acl()
     owner = (
-        entity.get_class().get_owner() if getattr(entity, '_type', None) == 'PgAttribute' and hasattr(entity, 'get_class') and callable(entity.get_class)
-        else entity.get_owner() if hasattr(entity, 'get_owner') and callable(entity.get_owner)
+        entity.get_class().get_owner()
+        if getattr(entity, "_type", None) == "PgAttribute"
+        and hasattr(entity, "get_class")
+        and callable(entity.get_class)
+        else entity.get_owner()
+        if hasattr(entity, "get_owner") and callable(entity.get_owner)
         else None
     )
     is_owner_and_has_no_explicit_acls = (
         owner is not None
         and owner == role
-        and not any(acl.role == getattr(owner, 'rolname', None) for acl in acls)
+        and not any(acl.role == getattr(owner, "rolname", None) for acl in acls)
         and (
-            getattr(entity, '_type', None) != 'PgAttribute'
+            getattr(entity, "_type", None) != "PgAttribute"
             or not (
-                hasattr(entity, 'get_class') and callable(entity.get_class)
-                and hasattr(entity.get_class(), 'get_acl') and callable(entity.get_class().get_acl)
-                and any(acl.role == getattr(owner, 'rolname', None) for acl in entity.get_class().get_acl())
+                hasattr(entity, "get_class")
+                and callable(entity.get_class)
+                and hasattr(entity.get_class(), "get_acl")
+                and callable(entity.get_class().get_acl)
+                and any(
+                    acl.role == getattr(owner, "rolname", None)
+                    for acl in entity.get_class().get_acl()
+                )
             )
         )
     )
