@@ -113,7 +113,8 @@ class SchemaRouter(APIRouter):
         await self.start()
         self.initialized = True
         yield
-        await self._pool.close()
+        self._watcher.cancel()
+        await asyncio.wait_for(await self._pool.close(), timeout=10)
 
     async def watch_schema(self):
         try:

@@ -51,8 +51,9 @@ class TableViewResolver(Resolver):
             typ = attr.get_type(introspection)
             fields.append(attr.attname)
 
+            _, attr_py_type = attr.get_py_type(introspection)
             field_definitions[attr.attname] = (
-                attr.get_py_type(introspection),
+                attr_py_type,
                 Field(introspection.get_description(introspection.PG_CLASS, typ.oid)),
             )
         typ = self.cls.relkind

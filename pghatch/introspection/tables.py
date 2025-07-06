@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime
 from functools import lru_cache
+from types import UnionType
 from typing import Any, Optional, TYPE_CHECKING, Tuple
 
 from pydantic import BaseModel
@@ -660,7 +661,7 @@ class PgAttribute(SQLModel, table=True):
         """
         return introspection.get_acl(introspection.PG_CLASS, self.attrelid, self.attnum)
 
-    def get_py_type(self, introspection: "Introspection") -> type:
+    def get_py_type(self, introspection: "Introspection") -> tuple[type, UnionType | type]:
         from pghatch.introspection.pgtypes import get_py_type
 
         return get_py_type(introspection=introspection, attr=self)
@@ -1763,7 +1764,7 @@ class PgProc(SQLModel, table=True):
                     raise ValueError(
                         f"Argument type with OID {type_id} not found in introspection data."
                     )
-                mode = self.progarmodes[idx] or "i"
+                mode = self.proargmodes[idx] if self.proargmodes else "i"
                 is_in = mode in ("i", "b", "v")
                 is_out = mode in ("o", "b", "v")
                 is_variadic = mode == "v"
