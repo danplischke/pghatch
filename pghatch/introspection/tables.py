@@ -1,4 +1,3 @@
-import logging
 from datetime import datetime
 from functools import lru_cache
 from typing import Any, Optional, TYPE_CHECKING, Tuple
@@ -24,9 +23,13 @@ from sqlalchemy.dialects.postgresql import OID
 from sqlalchemy.sql.sqltypes import NullType
 from sqlmodel import Field, SQLModel
 
+from pghatch.logging_config import get_logger
+
 if TYPE_CHECKING:
     from pghatch.introspection.introspection import Introspection
     from pghatch.introspection.acl import AclObject, OBJECT_SEQUENCE, OBJECT_TABLE
+
+logger = get_logger(__name__)
 
 RESERVED_WORDS = [
     "ABS",
@@ -986,8 +989,9 @@ class PgConstraint(SQLModel, table=True):
         """
         klass = self.get_class(introspection)
         if not klass:
-            logging.warning(
-                f"get_attributes called on constraint {self.oid} with no class found for conrelid {self.conrelid}"
+            logger.warning(
+                "get_attributes called on constraint %s with no class found for conrelid %s",
+                self.oid, self.conrelid
             )
             return []
         if not self.conkey:
@@ -1019,8 +1023,9 @@ class PgConstraint(SQLModel, table=True):
         """
         foreign_class = self.get_foreign_class(introspection)
         if not foreign_class:
-            logging.warning(
-                f"get_foreign_attributes called on constraint {self.oid} with no foreign class found for confrelid {self.confrelid}"
+            logger.warning(
+                "get_foreign_attributes called on constraint %s with no foreign class found for confrelid %s",
+                self.oid, self.confrelid
             )
             return []
         if not self.confkey:

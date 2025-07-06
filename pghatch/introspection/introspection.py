@@ -5,6 +5,7 @@ from asyncpg import Connection
 from pydantic import BaseModel
 from psycopg import connect
 
+from pghatch.logging_config import get_logger, log_performance
 from pghatch.introspection.tables import (
     PgDatabase,
     PgNamespace,
@@ -26,6 +27,8 @@ from pghatch.introspection.tables import (
     PgAm,
     PgRoles,
 )
+
+logger = get_logger(__name__)
 
 
 class Introspection(BaseModel):
@@ -251,7 +254,22 @@ class Introspection(BaseModel):
         )
 
 
+@log_performance(logger, "database introspection query")
 async def make_introspection_query(conn: Connection) -> Introspection:
+    """
+    Execute the database introspection query and return structured introspection data.
+
+    Args:
+        conn: AsyncPG database connection
+
+    Returns:
+        Introspection object containing all database metadata
+
+    Raises:
+        ValueError: If no introspection data is found or query fails
+    """
+    logger.debug("Starting database introspection query")
+
     introspection_query = """
                           with database as (select *
                                             from pg_catalog.pg_database
@@ -479,9 +497,39 @@ async def make_introspection_query(conn: Connection) -> Introspection:
                                  ) ::text as introspection \
                           """
 
-    result = await conn.fetchval(introspection_query)
-    if result:
-        introspection = Introspection.model_validate_json(result)
-        return introspection
-    else:
-        raise ValueError("No introspection data found.")
+    try:
+        logger.debug("Executing introspection query")
+        result = await conn.fetchval(introspection_query)
+
+        if result:
+            logger.debug("Parsing introspection query result")
+            introspection = Introspection.model_validate_json(result)
+
+            # Log summary statistics
+            logger.info(
+                "Database introspection completed successfully: "
+                "%d namespaces, %d classes, %d attributes, %d constraints, %d procedures, %d types",
+                len(introspection.namespaces),
+                len(introspection.classes),
+                len(introspection.attributes),
+                len(introspection.constraints),
+                len(introspection.procs),
+                len(introspection.types)
+            )
+
+            logger.debug(
+                "Additional introspection data: %d enums, %d extensions, %d indexes, %d policies",
+                len(introspection.enums),
+                len(introspection.extensions),
+                len(introspection.indexes),
+                len(introspection.policies)
+            )
+
+            return introspection
+        else:
+            logger.error("Introspection query returned no data")
+            raise ValueError("No introspection data found.")
+
+    except Exception as e:
+        logger.error("Database introspection failed: %s", str(e), exc_info=True)
+        raise

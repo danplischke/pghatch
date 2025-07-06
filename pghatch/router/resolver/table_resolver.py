@@ -7,8 +7,11 @@ from pglast.enums import LimitOption
 from pydantic import Field, create_model, BaseModel
 from pydantic.alias_generators import to_camel
 
+from pghatch.logging_config import get_logger, log_performance
 from pghatch.introspection.introspection import Introspection
 from pghatch.router.resolver.resolver import Resolver
+
+logger = get_logger(__name__)
 
 
 class TableViewLimit(BaseModel):
@@ -28,16 +31,26 @@ class TableViewLimit(BaseModel):
 
 class TableViewResolver(Resolver):
     def __init__(self, oid: str, introspection: Introspection):
+        logger.debug("Initializing TableViewResolver for OID: %s", oid)
+
         cls = introspection.get_class(oid)
         if cls is None:
+            logger.error("Class with OID %s not found in introspection data", oid)
             raise ValueError(f"Class with OID {oid} not found in introspection data.")
+
         self.cls = cls
         self.name = cls.relname
         self.oid = oid
         self.schema = introspection.get_namespace(cls.relnamespace).nspname
+
+        logger.debug("Creating resolver for %s.%s (type: %s)", self.schema, self.name, cls.relkind)
+
         self.type, self.fields, self.return_type = self._create_return_type(
             introspection
         )
+
+        logger.info("TableViewResolver created for %s.%s with %d fields",
+                   self.schema, self.name, len(self.fields))
 
     def _create_return_type(
         self, introspection: Introspection
@@ -66,8 +79,11 @@ class TableViewResolver(Resolver):
         )
 
     def mount(self, router: APIRouter):
+        endpoint_path = f"/{self.schema}/{self.name}"
+        logger.debug("Mounting table/view resolver at endpoint: %s", endpoint_path)
+
         router.add_api_route(
-            f"/{self.schema}/{self.name}",
+            endpoint_path,
             self.resolve,
             methods=["POST"],
             response_model=typing.List[self.return_type],
@@ -75,10 +91,21 @@ class TableViewResolver(Resolver):
             description=f"Fetches data from the table or view {self.schema}.{self.name}.",
         )
 
+        logger.info("Mounted endpoint %s for %s.%s", endpoint_path, self.schema, self.name)
+
+    @log_performance(logger, f"table/view query")
     async def resolve(self, limit: typing.Union[TableViewLimit, None] = None):
         from pglast.ast import SelectStmt, A_Const, Integer, RangeVar
         from pglast.stream import RawStream
         import asyncpg
+
+        logger.debug("Resolving query for %s.%s", self.schema, self.name)
+
+        # Log query parameters
+        if limit:
+            logger.debug("Query parameters - limit: %s, offset: %s", limit.limit, limit.offset)
+        else:
+            logger.debug("Query parameters - no limit specified")
 
         select_stmt = SelectStmt(
             targetList=[ResTarget(name=attr) for attr in self.fields],
@@ -102,12 +129,29 @@ class TableViewResolver(Resolver):
         )
 
         sql = RawStream()(select_stmt)
-        conn = await asyncpg.connect(
-            user="postgres", password="postgres", database="postgres", host="127.0.0.1"
-        )
-        values = await conn.fetch(sql)
-        await conn.close()
-        return [self.return_type(**dict(row)) for row in values]
+        logger.debug("Generated SQL: %s", sql)
+
+        try:
+            logger.debug("Connecting to database")
+            conn = await asyncpg.connect(
+                user="postgres", password="postgres", database="postgres", host="127.0.0.1"
+            )
+
+            logger.debug("Executing query")
+            values = await conn.fetch(sql)
+
+            logger.info("Query executed successfully for %s.%s, returned %d rows",
+                       self.schema, self.name, len(values))
+
+            await conn.close()
+            logger.debug("Database connection closed")
+
+            return [self.return_type(**dict(row)) for row in values]
+
+        except Exception as e:
+            logger.error("Query execution failed for %s.%s: %s",
+                        self.schema, self.name, str(e), exc_info=True)
+            raise
 
 
 if __name__ == "__main__":
