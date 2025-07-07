@@ -1,0 +1,572 @@
+"""
+Main QueryBuilder class for building PostgreSQL queries using pglast AST.
+
+This module provides the primary interface for constructing type-safe,
+parameterized PostgreSQL queries.
+"""
+
+from typing import Any, Dict, List, Optional, Union, Tuple
+from pglast import ast
+from pglast.stream import RawStream
+from pglast.enums import JoinType as PgJoinType, SortByDir, LimitOption
+import asyncpg
+
+from pghatch.introspection.introspection import Introspection
+from .types import (
+    QueryResult, ExecutionContext, TableReference, ColumnReference,
+    JoinType, OrderDirection
+)
+from .expressions import (
+    Expression, ColumnExpression, FunctionExpression, ResTargetExpression,
+    col, func, literal
+)
+from .functions import PostgreSQLFunctions
+
+
+class QueryBuilder:
+    """
+    Main query builder class for constructing PostgreSQL queries.
+
+    Provides a fluent interface for building SELECT, INSERT, UPDATE, and DELETE
+    queries using the PostgreSQL AST via pglast.
+    """
+
+    def __init__(self, introspection: Optional[Introspection] = None):
+        self.introspection = introspection
+        self.functions = PostgreSQLFunctions(introspection)
+
+        # Query components
+        self._select_list: List[Union[str, Expression, ResTargetExpression]] = []
+        self._from_clause: Optional[TableReference] = None
+        self._joins: List[Tuple[str, TableReference, Optional[Expression]]] = []
+        self._where_clause: Optional[Expression] = None
+        self._group_by: List[Union[str, Expression]] = []
+        self._having_clause: Optional[Expression] = None
+        self._order_by: List[Tuple[Union[str, Expression], str]] = []
+        self._limit_count: Optional[int] = None
+        self._offset_count: Optional[int] = None
+        self._distinct: bool = False
+
+        # For CTEs (Common Table Expressions)
+        self._ctes: List[Tuple[str, "QueryBuilder"]] = []
+
+        # Parameters for prepared statements
+        self._parameters: List[Any] = []
+        self._parameter_counter = 0
+
+    def select(self, *columns: Union[str, Expression, FunctionExpression]) -> "QueryBuilder":
+        """
+        Add columns to the SELECT clause.
+
+        Args:
+            *columns: Column names (strings), expressions, or function calls
+
+        Returns:
+            QueryBuilder: Self for method chaining
+        """
+        for column in columns:
+            if isinstance(column, str):
+                # Simple column name
+                self._select_list.append(column)
+            elif isinstance(column, (Expression, FunctionExpression)):
+                # Expression or function
+                self._select_list.append(column)
+            elif hasattr(column, 'node'):
+                # ResTargetExpression or other node-based objects
+                self._select_list.append(column)
+            else:
+                # Convert to string as fallback
+                self._select_list.append(str(column))
+
+        return self
+
+    def select_all(self) -> "QueryBuilder":
+        """Add SELECT * to the query."""
+        self._select_list = [ast.A_Star()]
+        return self
+
+    def distinct(self, distinct: bool = True) -> "QueryBuilder":
+        """Enable or disable DISTINCT."""
+        self._distinct = distinct
+        return self
+
+    def from_(
+        self,
+        table: str,
+        schema: Optional[str] = None,
+        alias: Optional[str] = None
+    ) -> "QueryBuilder":
+        """
+        Set the FROM clause.
+
+        Args:
+            table: Table name
+            schema: Optional schema name
+            alias: Optional table alias
+
+        Returns:
+            QueryBuilder: Self for method chaining
+        """
+        self._from_clause = TableReference(table, schema, alias)
+        return self
+
+    def join(
+        self,
+        table: str,
+        on: Optional[Expression] = None,
+        join_type: str = JoinType.INNER,
+        schema: Optional[str] = None,
+        alias: Optional[str] = None
+    ) -> "QueryBuilder":
+        """
+        Add a JOIN clause.
+
+        Args:
+            table: Table to join
+            on: Join condition expression
+            join_type: Type of join (INNER, LEFT, RIGHT, FULL, CROSS)
+            schema: Optional schema name
+            alias: Optional table alias
+
+        Returns:
+            QueryBuilder: Self for method chaining
+        """
+        table_ref = TableReference(table, schema, alias)
+        self._joins.append((join_type, table_ref, on))
+        return self
+
+    def left_join(
+        self,
+        table: str,
+        on: Optional[Expression] = None,
+        schema: Optional[str] = None,
+        alias: Optional[str] = None
+    ) -> "QueryBuilder":
+        """Add a LEFT JOIN clause."""
+        return self.join(table, on, JoinType.LEFT, schema, alias)
+
+    def right_join(
+        self,
+        table: str,
+        on: Optional[Expression] = None,
+        schema: Optional[str] = None,
+        alias: Optional[str] = None
+    ) -> "QueryBuilder":
+        """Add a RIGHT JOIN clause."""
+        return self.join(table, on, JoinType.RIGHT, schema, alias)
+
+    def inner_join(
+        self,
+        table: str,
+        on: Optional[Expression] = None,
+        schema: Optional[str] = None,
+        alias: Optional[str] = None
+    ) -> "QueryBuilder":
+        """Add an INNER JOIN clause."""
+        return self.join(table, on, JoinType.INNER, schema, alias)
+
+    def full_join(
+        self,
+        table: str,
+        on: Optional[Expression] = None,
+        schema: Optional[str] = None,
+        alias: Optional[str] = None
+    ) -> "QueryBuilder":
+        """Add a FULL JOIN clause."""
+        return self.join(table, on, JoinType.FULL, schema, alias)
+
+    def cross_join(
+        self,
+        table: str,
+        schema: Optional[str] = None,
+        alias: Optional[str] = None
+    ) -> "QueryBuilder":
+        """Add a CROSS JOIN clause."""
+        return self.join(table, None, JoinType.CROSS, schema, alias)
+
+    def where(self, condition: Expression) -> "QueryBuilder":
+        """
+        Add a WHERE clause condition.
+
+        Args:
+            condition: Boolean expression for filtering
+
+        Returns:
+            QueryBuilder: Self for method chaining
+        """
+        if self._where_clause is None:
+            self._where_clause = condition
+        else:
+            # Combine with existing condition using AND
+            from .expressions import and_
+            self._where_clause = and_(self._where_clause, condition)
+
+        return self
+
+    def group_by(self, *columns: Union[str, Expression]) -> "QueryBuilder":
+        """
+        Add columns to the GROUP BY clause.
+
+        Args:
+            *columns: Column names or expressions to group by
+
+        Returns:
+            QueryBuilder: Self for method chaining
+        """
+        self._group_by.extend(columns)
+        return self
+
+    def having(self, condition: Expression) -> "QueryBuilder":
+        """
+        Add a HAVING clause condition.
+
+        Args:
+            condition: Boolean expression for filtering groups
+
+        Returns:
+            QueryBuilder: Self for method chaining
+        """
+        if self._having_clause is None:
+            self._having_clause = condition
+        else:
+            # Combine with existing condition using AND
+            from .expressions import and_
+            self._having_clause = and_(self._having_clause, condition)
+
+        return self
+
+    def order_by(
+        self,
+        column: Union[str, Expression],
+        direction: str = OrderDirection.ASC
+    ) -> "QueryBuilder":
+        """
+        Add a column to the ORDER BY clause.
+
+        Args:
+            column: Column name or expression to order by
+            direction: Sort direction (ASC or DESC)
+
+        Returns:
+            QueryBuilder: Self for method chaining
+        """
+        self._order_by.append((column, direction))
+        return self
+
+    def limit(self, count: int) -> "QueryBuilder":
+        """
+        Set the LIMIT clause.
+
+        Args:
+            count: Maximum number of rows to return
+
+        Returns:
+            QueryBuilder: Self for method chaining
+        """
+        self._limit_count = count
+        return self
+
+    def offset(self, count: int) -> "QueryBuilder":
+        """
+        Set the OFFSET clause.
+
+        Args:
+            count: Number of rows to skip
+
+        Returns:
+            QueryBuilder: Self for method chaining
+        """
+        self._offset_count = count
+        return self
+
+    def with_(self, name: str, query: "QueryBuilder") -> "QueryBuilder":
+        """
+        Add a Common Table Expression (CTE).
+
+        Args:
+            name: Name of the CTE
+            query: QueryBuilder instance for the CTE query
+
+        Returns:
+            QueryBuilder: Self for method chaining
+        """
+        self._ctes.append((name, query))
+        return self
+
+    def build(self) -> Tuple[str, List[Any]]:
+        """
+        Build the SQL query and return it with parameters.
+
+        Returns:
+            Tuple[str, List[Any]]: SQL string and parameter list
+        """
+        # Reset parameters for this build
+        self._parameters = []
+        self._parameter_counter = 0
+
+        # Build the AST
+        select_stmt = self._build_select_stmt()
+
+        # Handle CTEs
+        if self._ctes:
+            cte_list = []
+            for cte_name, cte_query in self._ctes:
+                # Build CTE query to collect parameters
+                cte_sql, cte_params = cte_query.build()
+                self._parameters.extend(cte_params)
+
+                # Use the AST from the CTE query, not the SQL string
+                cte_list.append(ast.CommonTableExpr(
+                    ctename=cte_name,
+                    ctequery=cte_query._build_select_stmt()
+                ))
+
+            # Wrap in WITH clause - manually copy all attributes
+            select_stmt = ast.SelectStmt(
+                withClause=ast.WithClause(ctes=cte_list),
+                distinctClause=select_stmt.distinctClause,
+                targetList=select_stmt.targetList,
+                fromClause=select_stmt.fromClause,
+                whereClause=select_stmt.whereClause,
+                groupClause=select_stmt.groupClause,
+                havingClause=select_stmt.havingClause,
+                sortClause=select_stmt.sortClause,
+                limitCount=select_stmt.limitCount,
+                limitOffset=select_stmt.limitOffset,
+                limitOption=select_stmt.limitOption
+            )
+
+        # Generate SQL
+        sql = RawStream()(select_stmt)
+
+        return sql, self._parameters
+
+    def _build_select_stmt(self) -> ast.SelectStmt:
+        """Build the main SELECT statement AST."""
+        # Build target list (SELECT clause)
+        target_list = self._build_target_list()
+
+        # Build FROM clause
+        from_clause = self._build_from_clause()
+
+        # Build WHERE clause
+        where_clause = self._where_clause.node if self._where_clause else None
+
+        # Build GROUP BY clause
+        group_clause = self._build_group_by()
+
+        # Build HAVING clause
+        having_clause = self._having_clause.node if self._having_clause else None
+
+        # Build ORDER BY clause
+        sort_clause = self._build_order_by()
+
+        # Build LIMIT/OFFSET
+        limit_count = None
+        limit_offset = None
+        limit_option = None
+
+        if self._limit_count is not None:
+            limit_count = ast.A_Const(val=ast.Integer(ival=self._limit_count))
+            limit_option = LimitOption.LIMIT_OPTION_COUNT
+
+        if self._offset_count is not None:
+            limit_offset = ast.A_Const(val=ast.Integer(ival=self._offset_count))
+
+        return ast.SelectStmt(
+            distinctClause=[ast.A_Star()] if self._distinct else None,
+            targetList=target_list,
+            fromClause=from_clause,
+            whereClause=where_clause,
+            groupClause=group_clause,
+            havingClause=having_clause,
+            sortClause=sort_clause,
+            limitCount=limit_count,
+            limitOffset=limit_offset,
+            limitOption=limit_option
+        )
+
+    def _build_target_list(self) -> List[ast.ResTarget]:
+        """Build the SELECT target list."""
+        if not self._select_list:
+            # Default to SELECT *
+            return [ast.ResTarget(val=ast.A_Star())]
+
+        targets = []
+        for item in self._select_list:
+            if isinstance(item, str):
+                # Simple column name
+                targets.append(ast.ResTarget(
+                    val=ast.ColumnRef(fields=[ast.String(sval=item)])
+                ))
+            elif isinstance(item, ast.A_Star):
+                # SELECT *
+                targets.append(ast.ResTarget(val=item))
+            elif isinstance(item, Expression):
+                # Expression
+                targets.append(ast.ResTarget(val=item.node))
+            elif hasattr(item, 'node') and hasattr(item.node, 'val'):
+                # ResTargetExpression
+                targets.append(item.node)
+            else:
+                # Fallback - treat as string
+                targets.append(ast.ResTarget(
+                    val=ast.ColumnRef(fields=[ast.String(sval=str(item))])
+                ))
+
+        return targets
+
+    def _build_from_clause(self) -> Optional[List[ast.RangeVar]]:
+        """Build the FROM clause."""
+        if not self._from_clause:
+            return None
+
+        from_items = []
+
+        # Main table
+        range_var = ast.RangeVar(
+            relname=self._from_clause.name,
+            schemaname=self._from_clause.schema,
+            alias=ast.Alias(aliasname=self._from_clause.alias) if self._from_clause.alias else None,
+            inh=True  # Include inheritance (removes ONLY keyword)
+        )
+        from_items.append(range_var)
+
+        # Add joins
+        for join_type, table_ref, condition in self._joins:
+            join_node = ast.JoinExpr(
+                jointype=self._map_join_type(join_type),
+                larg=from_items[-1] if len(from_items) == 1 else ast.JoinExpr(),
+                rarg=ast.RangeVar(
+                    relname=table_ref.name,
+                    schemaname=table_ref.schema,
+                    alias=ast.Alias(aliasname=table_ref.alias) if table_ref.alias else None,
+                    inh=True  # Include inheritance (removes ONLY keyword)
+                ),
+                quals=condition.node if condition else None
+            )
+            from_items = [join_node]
+
+        return from_items
+
+    def _build_group_by(self) -> Optional[List[ast.Node]]:
+        """Build the GROUP BY clause."""
+        if not self._group_by:
+            return None
+
+        group_items = []
+        for item in self._group_by:
+            if isinstance(item, str):
+                group_items.append(ast.ColumnRef(fields=[ast.String(sval=item)]))
+            elif isinstance(item, Expression):
+                group_items.append(item.node)
+            else:
+                group_items.append(ast.ColumnRef(fields=[ast.String(sval=str(item))]))
+
+        return group_items
+
+    def _build_order_by(self) -> Optional[List[ast.SortBy]]:
+        """Build the ORDER BY clause."""
+        if not self._order_by:
+            return None
+
+        sort_items = []
+        for column, direction in self._order_by:
+            if isinstance(column, str):
+                node = ast.ColumnRef(fields=[ast.String(sval=column)])
+            elif isinstance(column, Expression):
+                node = column.node
+            else:
+                node = ast.ColumnRef(fields=[ast.String(sval=str(column))])
+
+            sort_dir = SortByDir.SORTBY_ASC if direction == OrderDirection.ASC else SortByDir.SORTBY_DESC
+
+            sort_items.append(ast.SortBy(
+                node=node,
+                sortby_dir=sort_dir
+            ))
+
+        return sort_items
+
+    def _map_join_type(self, join_type: str) -> PgJoinType:
+        """Map our join type strings to pglast join types."""
+        mapping = {
+            JoinType.INNER: PgJoinType.JOIN_INNER,
+            JoinType.LEFT: PgJoinType.JOIN_LEFT,
+            JoinType.RIGHT: PgJoinType.JOIN_RIGHT,
+            JoinType.FULL: PgJoinType.JOIN_FULL,
+            JoinType.CROSS: PgJoinType.JOIN_INNER,  # CROSS JOIN is handled differently
+        }
+        return mapping.get(join_type, PgJoinType.JOIN_INNER)
+
+    def _add_parameter(self, value: Any) -> str:
+        """Add a parameter and return its placeholder."""
+        self._parameter_counter += 1
+        self._parameters.append(value)
+        return f"${self._parameter_counter}"
+
+    async def execute(
+        self,
+        pool: asyncpg.Pool,
+        connection: Optional[asyncpg.Connection] = None,
+        model_class: Optional[type] = None
+    ) -> QueryResult:
+        """
+        Execute the query and return results.
+
+        Args:
+            pool: AsyncPG connection pool
+            connection: Optional existing connection to use
+            model_class: Optional Pydantic model class for result conversion
+
+        Returns:
+            QueryResult: Query results with metadata
+        """
+        sql, parameters = self.build()
+
+        if connection:
+            rows = await connection.fetch(sql, *parameters)
+        else:
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(sql, *parameters)
+
+        # Convert asyncpg.Record objects to dictionaries
+        dict_rows = [dict(row) for row in rows]
+
+        return QueryResult(
+            rows=dict_rows,
+            sql=sql,
+            parameters=parameters,
+            row_count=len(dict_rows),
+            model_class=model_class
+        )
+
+    async def execute_one(
+        self,
+        pool: asyncpg.Pool,
+        connection: Optional[asyncpg.Connection] = None,
+        model_class: Optional[type] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Execute the query and return the first result.
+
+        Args:
+            pool: AsyncPG connection pool
+            connection: Optional existing connection to use
+            model_class: Optional Pydantic model class for result conversion
+
+        Returns:
+            Optional[Dict[str, Any]]: First row or None
+        """
+        result = await self.execute(pool, connection, model_class)
+        return result.first()
+
+    def __str__(self) -> str:
+        """Return the SQL string representation."""
+        sql, _ = self.build()
+        return sql
+
+    def __repr__(self) -> str:
+        """Return a detailed string representation."""
+        sql, params = self.build()
+        return f"QueryBuilder(sql='{sql}', params={params})"
