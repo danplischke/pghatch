@@ -132,7 +132,7 @@ def _get_array_type(
         elem_type = typ.get_elem_type(introspection)
         dims = attr.attndims
 
-    py_type, _ = get_py_type(introspection=introspection, typ=elem_type)
+    py_type = get_py_type(introspection=introspection, typ=elem_type)
 
     dims = 1 if not dims else dims
     for idx in range(dims):
@@ -163,11 +163,11 @@ def _get_composite_type(
     for attr in attrs:
         if attr.attisdropped:
             continue
-        _, nullable_field_type = get_py_type(
+        py_type = get_py_type(
             introspection=introspection, typ=attr.atttypid, attr=attr
         )
         field_definitions[attr.attname] = (
-            nullable_field_type,
+            py_type,
             Field(description=attr.get_description(introspection)),
         )
     return create_model(
@@ -305,7 +305,7 @@ def _get_range_py_type(
 
     # For range types, we can return a tuple of the element type
     elem_type = typ.get_elem_type(introspection)
-    return Tuple[get_py_type(introspection=introspection, typ=elem_type)]
+    return get_py_type(introspection=introspection, typ=elem_type)
 
 
 # String type
@@ -507,7 +507,4 @@ def get_py_type(
     typ: Optional["PgType"] = None,
     attr: Optional["PgAttribute"] | None = None,
 ) -> (type, UnionType | type):
-    pytype = _get_py_type_by_category(introspection, typ, attr)
-    return pytype, _get_nullable_type(
-        pytype, typ, attr
-    )
+    return _get_nullable_type(_get_py_type_by_category(introspection, typ, attr), typ, attr)
