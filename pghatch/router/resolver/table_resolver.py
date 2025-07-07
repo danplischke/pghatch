@@ -38,9 +38,10 @@ class TableViewResolver(Resolver):
         self.type, self.fields, self.return_type = self._create_return_type(
             introspection
         )
+        self.router = None
 
     def _create_return_type(
-        self, introspection: Introspection
+            self, introspection: Introspection
     ) -> tuple[str, list[str], type]:
         field_definitions = {}
         fields = list()
@@ -67,6 +68,7 @@ class TableViewResolver(Resolver):
         )
 
     def mount(self, router: APIRouter):
+        self.router = router
         router.add_api_route(
             f"/{self.schema}/{self.name}",
             self.resolve,
@@ -94,7 +96,8 @@ class TableViewResolver(Resolver):
             limitCount=A_Const(val=Integer(ival=limit.limit))
             if limit is not None and limit.limit is not None
             else None,
-            limitOffset=A_Const(val=Integer(ival=limit.offset)) # TODO: change to server-side binding / remote cursor pagination
+            limitOffset=A_Const(
+                val=Integer(ival=limit.offset))  # TODO: change to server-side binding / remote cursor pagination
             if limit is not None and limit.offset is not None
             else None,
             limitOption=LimitOption.LIMIT_OPTION_COUNT
@@ -103,11 +106,8 @@ class TableViewResolver(Resolver):
         )
 
         sql = RawStream()(select_stmt)
-        conn = await asyncpg.connect(
-            user="postgres", password="postgres", database="postgres", host="127.0.0.1"
-        )
-        values = await conn.fetch(sql)
-        await conn.close()
+        async with self.router._pool.acquire() as conn:
+            values = await conn.fetch(sql)
         return [self.return_type(**dict(row)) for row in values]
 
 
@@ -116,6 +116,7 @@ if __name__ == "__main__":
         while True:
             await asyncio.sleep(1)
             print("Running...")
+
 
     async def main():
         asyncio.create_task(task())

@@ -29,11 +29,16 @@ class ProcResolver(Resolver):
         self.return_type, self.nullable_ret_type, self.input_model = self._create_return_type(
             introspection
         )
+        self.router = None
 
     def _create_return_type(self, introspection: Introspection):
         args = self.proc.get_arguments(introspection)
         ret_type = self.proc.get_return_type(introspection)
         ret_type, nullable_ret_type = get_py_type(introspection=introspection, typ=ret_type)
+
+        # proretset = true: returns a set (SETOF or TABLE)
+        # return_type = record or a composite type: likely TABLE or SETOF composite
+        # return_type = scalar type (e.g., integer, text): returns a single value
 
         arg_definitions = dict()
         for i, arg in enumerate(args):
@@ -51,7 +56,7 @@ class ProcResolver(Resolver):
 
         return ret_type, nullable_ret_type, input_model
 
-    async def resolver_function(self, inp: BaseModel):
+    async def resolver_function(self, inp: BaseModel | None = None):
         from pglast.ast import SelectStmt, ParamRef, RangeFunction, FuncCall, String, ResTarget, ColumnRef, A_Star
         from pglast.stream import RawStream
         import asyncpg
@@ -101,32 +106,25 @@ class ProcResolver(Resolver):
         sql = RawStream()(select_stmt)
 
         # Execute the query
-        conn = await asyncpg.connect(
-            user="postgres", password="postgres", database="postgres", host="127.0.0.1"
-        )
-
-        try:
-            if param_values:
-                values = await conn.fetch(sql, *param_values)
-            else:
-                values = await conn.fetch(sql)
-
-            # Convert results to return type
-            if self.type == "p":  # procedure
-                # Procedures might not return data, just execute
-                return []
-            else:  # function
-                # Functions return data, convert to return type
-                if values:
-                    if issubclass(self.return_type.__class__, ModelMetaclass):
-                        return [self.return_type(**dict(row)) for row in values]
-                    else:
-                        return [self.return_type(row) for row in values]
+        async with self.router._pool.acquire() as conn:
+                if param_values:
+                    values = await conn.fetch(sql, *param_values)
                 else:
+                    values = await conn.fetch(sql)
+
+                # Convert results to return type
+                if self.type == "p":  # procedure
+                    # Procedures might not return data, just execute
                     return []
-        except (Exception,) as e:
-            await conn.close()
-            raise e
+                else:  # function
+                    # Functions return data, convert to return type
+                    if values:
+                        if issubclass(self.return_type.__class__, ModelMetaclass):
+                            return [self.return_type(**dict(row)) for row in values]
+                        else:
+                            return [self.return_type(row) for row in values]
+                    else:
+                        return []
 
     def resolve(self):
         """
@@ -157,19 +155,13 @@ class ProcResolver(Resolver):
         return resolver_function
 
     def mount(self, router: APIRouter):
-        # Use List[Any] for primitive types to avoid FastAPI validation issues
-        if hasattr(self.return_type, '__fields__'):
-            # It's a Pydantic model (composite type)
-            response_model = List[self.return_type]
-        else:
-            # It's a primitive type, use Any to avoid validation issues
-            response_model = List[Any]
+        self.router = router
 
         router.add_api_route(
             f"/{self.schema}/{self.name}",
             self.resolve(),
             methods=["POST"],
-            response_model=response_model,
+            response_model=List[self.nullable_ret_type],
             summary=f"Get data from {self.schema}.{self.name}",
             description=f"Fetches data from the function or procedure {self.schema}.{self.name}.",
         )
