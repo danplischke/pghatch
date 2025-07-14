@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 from pghatch.introspection.introspection import make_introspection_query
 from pghatch.router.resolver.proc_resolver import ProcResolver
-from pghatch.router.resolver.table_resolver import TableViewResolver
+from pghatch.router.enhanced_table_resolver import EnhancedTableViewResolver
 
 WATCH_SQL = """
 drop schema if exists pghatch_watch cascade;
@@ -154,7 +154,7 @@ class SchemaRouter(APIRouter):
                 if introspection.get_namespace(
                         cls.relnamespace
                 ).nspname == self.schema and cls.relkind in ("r", "v", "m", "f", "p"):
-                    TableViewResolver(oid=cls.oid, introspection=introspection).mount(self)
+                    EnhancedTableViewResolver(oid=cls.oid, introspection=introspection).mount(self)
 
             for proc in introspection.procs:
                 if introspection.get_namespace(
