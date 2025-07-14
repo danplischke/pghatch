@@ -19,11 +19,11 @@ if TYPE_CHECKING:
 class Parameter:
     """Represents a parameterized value for safe SQL injection prevention."""
 
-    def __init__(self, name: str):
-        self.name = name
+    def __init__(self, value: Any):
+        self.value = value
 
     def __repr__(self):
-        return f"Parameter({self.name!r})"
+        return f"Parameter({self.value!r})"
 
 
 class Expression:
@@ -60,7 +60,7 @@ class ColumnExpression(Expression):
         if table_alias:
             fields.append(ast.String(sval=table_alias))
         if isinstance(name, Parameter):
-            fields.append(ast.String(sval=name.value))
+            fields.append(ast.String(sval=str(name.value)))
         elif isinstance(name, str):
             if "." in name:
                 # Handle qualified names like "schema.table.column"
@@ -504,6 +504,67 @@ class FunctionRegistry:
 
 # Create a global function registry instance
 func = FunctionRegistry()
+
+
+# Convenience functions for common operations
+def eq(field: str, value: Any) -> Expression:
+    """Create an equality comparison."""
+    return col(field).eq(value)
+
+
+def neq(field: str, value: Any) -> Expression:
+    """Create a not-equal comparison."""
+    return col(field).ne(value)
+
+
+def gt(field: str, value: Any) -> Expression:
+    """Create a greater-than comparison."""
+    return col(field).gt(value)
+
+
+def gte(field: str, value: Any) -> Expression:
+    """Create a greater-than-or-equal comparison."""
+    return col(field).ge(value)
+
+
+def lt(field: str, value: Any) -> Expression:
+    """Create a less-than comparison."""
+    return col(field).lt(value)
+
+
+def lte(field: str, value: Any) -> Expression:
+    """Create a less-than-or-equal comparison."""
+    return col(field).le(value)
+
+
+def like(field: str, pattern: str) -> Expression:
+    """Create a LIKE comparison."""
+    return col(field).like(pattern)
+
+
+def ilike(field: str, pattern: str) -> Expression:
+    """Create an ILIKE comparison."""
+    return col(field).ilike(pattern)
+
+
+def in_(field: str, values: Union[List[Any], "Query"]) -> Expression:
+    """Create an IN comparison."""
+    return col(field).in_(values)
+
+
+def not_in(field: str, values: Union[List[Any], "Query"]) -> Expression:
+    """Create a NOT IN comparison using negation of IN."""
+    return not_(col(field).in_(values))
+
+
+def is_null(field: str) -> Expression:
+    """Create an IS NULL comparison."""
+    return col(field).is_null()
+
+
+def is_not_null(field: str) -> Expression:
+    """Create an IS NOT NULL comparison."""
+    return col(field).is_not_null()
 
 
 def _create_comparison(left: Expression, operator: str, right: Any) -> Expression:
