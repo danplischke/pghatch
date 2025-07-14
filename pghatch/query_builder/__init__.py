@@ -5,12 +5,12 @@ This module provides a fluent interface for building type-safe PostgreSQL querie
 using the native PostgreSQL AST via pglast.
 """
 
-from .builder import QueryBuilder
+from .builder import Query
 from .expressions import col, func, literal, param, and_, or_, not_
 from .types import QueryResult, ExecutionContext
 
 __all__ = [
-    "QueryBuilder",
+    "Query",
     "col",
     "func",
     "literal",

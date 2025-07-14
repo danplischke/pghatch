@@ -4,26 +4,49 @@ Main QueryBuilder class for building PostgreSQL queries using pglast AST.
 This module provides the primary interface for constructing type-safe,
 parameterized PostgreSQL queries.
 """
-
 from typing import Any, Dict, List, Optional, Union, Tuple
-from pglast import ast
-from pglast.stream import RawStream
-from pglast.enums import JoinType as PgJoinType, SortByDir, LimitOption
+
 import asyncpg
+from pglast import ast
+from pglast.enums import JoinType as PgJoinType, SortByDir, LimitOption
+from pglast.stream import RawStream
 
-from pghatch.introspection.introspection import Introspection
-from .types import (
-    QueryResult, ExecutionContext, TableReference, ColumnReference,
-    JoinType, OrderDirection
-)
 from .expressions import (
-    Expression, ColumnExpression, FunctionExpression, ResTargetExpression,
-    col, func, literal
+    Expression, FunctionExpression, ResTargetExpression, Parameter, ColumnExpression
 )
-from .functions import PostgreSQLFunctions
+from .types import (
+    QueryResult, TableReference, JoinType, OrderDirection
+)
 
 
-class QueryBuilder:
+def select(
+        *columns: Union[str, Expression, FunctionExpression, Parameter, ResTargetExpression]
+) -> "Query":
+    """
+    Create a new Query instance with a SELECT clause.
+
+    Args:
+        *columns: Column names (strings), expressions, or function calls
+
+    Returns:
+        Query: New Query instance with SELECT clause
+    """
+    query = Query()
+    return query.select(*columns)
+
+
+def select_all() -> "Query":
+    """
+    Create a new Query instance with SELECT *.
+
+    Returns:
+        Query: New Query instance with SELECT *
+    """
+    query = Query()
+    return query.select_all()
+
+
+class Query:
     """
     Main query builder class for constructing PostgreSQL queries.
 
@@ -31,9 +54,7 @@ class QueryBuilder:
     queries using the PostgreSQL AST via pglast.
     """
 
-    def __init__(self, introspection: Optional[Introspection] = None):
-        self.introspection = introspection
-        self.functions = PostgreSQLFunctions(introspection)
+    def __init__(self):
 
         # Query components
         self._select_list: List[Union[str, Expression, ResTargetExpression]] = []
@@ -45,16 +66,16 @@ class QueryBuilder:
         self._order_by: List[Tuple[Union[str, Expression], str]] = []
         self._limit_count: Optional[int] = None
         self._offset_count: Optional[int] = None
-        self._distinct: bool = False
+        self._distinct: Optional[List[str | Expression]] = None
 
         # For CTEs (Common Table Expressions)
-        self._ctes: List[Tuple[str, "QueryBuilder"]] = []
+        self._ctes: List[Tuple[str, "Query"]] = []
 
         # Parameters for prepared statements
         self._parameters: List[Any] = []
         self._parameter_counter = 0
 
-    def select(self, *columns: Union[str, Expression, FunctionExpression]) -> "QueryBuilder":
+    def select(self, *columns: Union[str, Expression, FunctionExpression, Parameter, ResTargetExpression]) -> "Query":
         """
         Add columns to the SELECT clause.
 
@@ -62,12 +83,44 @@ class QueryBuilder:
             *columns: Column names (strings), expressions, or function calls
 
         Returns:
-            QueryBuilder: Self for method chaining
+            Query: Self for method chaining
         """
         for column in columns:
             if isinstance(column, str):
-                # Simple column name
-                self._select_list.append(column)
+                if column == "*":
+                    # Handle SELECT *
+                    self._select_list.append(ResTargetExpression(
+                        ast.ColumnRef(fields=[ast.A_Star()])))
+
+                elif "." in column:
+                    # Handle qualified names like "schema.table.column"
+                    parts = column.split(".")
+                    if len(parts) == 3:
+                        schema, table, col_name = parts
+                        self._select_list.append(
+                            ResTargetExpression(
+                                ast.ColumnRef(
+                                    fields=[ast.String(sval=schema), ast.String(sval=table), ast.String(sval=col_name)])
+                            )
+                        )
+                    elif len(parts) == 2:
+                        table, col_name = parts
+                        self._select_list.append(
+                            ResTargetExpression(
+                                ast.ColumnRef(fields=[ast.String(sval=table), ast.String(sval=col_name)])
+                            )
+                        )
+                    else:
+                        raise ValueError("Invalid column format. Expected 'schema.table.column' or 'table.column'.")
+                else:
+                    self._select_list.append(ResTargetExpression(ast.ColumnRef(fields=[ast.String(sval=column)])))
+
+            elif isinstance(column, Parameter):
+                # Parameter object
+                self._add_parameter(column.value)
+                self._select_list.append(ResTargetExpression(
+                    ast.ParamRef(number=self._parameter_counter)
+                ))
             elif isinstance(column, (Expression, FunctionExpression)):
                 # Expression or function
                 self._select_list.append(column)
@@ -80,22 +133,47 @@ class QueryBuilder:
 
         return self
 
-    def select_all(self) -> "QueryBuilder":
+    def select_all(self) -> "Query":
         """Add SELECT * to the query."""
         self._select_list = [ast.A_Star()]
         return self
 
-    def distinct(self, distinct: bool = True) -> "QueryBuilder":
+    def distinct(self, columns: list[str | Expression] = None) -> "Query":
         """Enable or disable DISTINCT."""
-        self._distinct = distinct
+
+        if columns is None or len(columns) == 0:
+            self._distinct = (None,)
+        else:
+            distinct_cols = list()
+            for col in columns:
+                if isinstance(col, str):
+                    if "." in col:
+                        # Handle qualified names like "schema.table.column"
+                        parts = col.split(".")
+                        if len(parts) == 3:
+                            schema, table, col_name = parts
+                            distinct_cols.append(ast.ColumnRef(
+                                fields=[ast.String(sval=schema), ast.String(sval=table), ast.String(sval=col_name)]))
+                        elif len(parts) == 2:
+                            table, col_name = parts
+                            distinct_cols.append(
+                                ast.ColumnRef(fields=[ast.String(sval=table), ast.String(sval=col_name)]))
+                        else:
+                            raise ValueError("Invalid column format. Expected 'schema.table.column' or 'table.column'.")
+                    else:
+                        distinct_cols.append(ast.ColumnRef(fields=[ast.String(sval=col)]))
+                elif isinstance(col, Expression):
+                    distinct_cols.append(col.node)
+
+            self._distinct = tuple(distinct_cols)
         return self
 
     def from_(
-        self,
-        table: str,
-        schema: Optional[str] = None,
-        alias: Optional[str] = None
-    ) -> "QueryBuilder":
+            self,
+            table: str,
+            schema: Optional[str] = None,
+            alias: Optional[str] = None
+    ) -> "Query":
         """
         Set the FROM clause.
 
@@ -105,19 +183,19 @@ class QueryBuilder:
             alias: Optional table alias
 
         Returns:
-            QueryBuilder: Self for method chaining
+            Query: Self for method chaining
         """
         self._from_clause = TableReference(table, schema, alias)
         return self
 
     def join(
-        self,
-        table: str,
-        on: Optional[Expression] = None,
-        join_type: str = JoinType.INNER,
-        schema: Optional[str] = None,
-        alias: Optional[str] = None
-    ) -> "QueryBuilder":
+            self,
+            table: str,
+            on: Optional[Expression] = None,
+            join_type: str = JoinType.INNER,
+            schema: Optional[str] = None,
+            alias: Optional[str] = None
+    ) -> "Query":
         """
         Add a JOIN clause.
 
@@ -129,62 +207,62 @@ class QueryBuilder:
             alias: Optional table alias
 
         Returns:
-            QueryBuilder: Self for method chaining
+            Query: Self for method chaining
         """
         table_ref = TableReference(table, schema, alias)
         self._joins.append((join_type, table_ref, on))
         return self
 
     def left_join(
-        self,
-        table: str,
-        on: Optional[Expression] = None,
-        schema: Optional[str] = None,
-        alias: Optional[str] = None
-    ) -> "QueryBuilder":
+            self,
+            table: str,
+            on: Optional[Expression] = None,
+            schema: Optional[str] = None,
+            alias: Optional[str] = None
+    ) -> "Query":
         """Add a LEFT JOIN clause."""
         return self.join(table, on, JoinType.LEFT, schema, alias)
 
     def right_join(
-        self,
-        table: str,
-        on: Optional[Expression] = None,
-        schema: Optional[str] = None,
-        alias: Optional[str] = None
-    ) -> "QueryBuilder":
+            self,
+            table: str,
+            on: Optional[Expression] = None,
+            schema: Optional[str] = None,
+            alias: Optional[str] = None
+    ) -> "Query":
         """Add a RIGHT JOIN clause."""
         return self.join(table, on, JoinType.RIGHT, schema, alias)
 
     def inner_join(
-        self,
-        table: str,
-        on: Optional[Expression] = None,
-        schema: Optional[str] = None,
-        alias: Optional[str] = None
-    ) -> "QueryBuilder":
+            self,
+            table: str,
+            on: Optional[Expression] = None,
+            schema: Optional[str] = None,
+            alias: Optional[str] = None
+    ) -> "Query":
         """Add an INNER JOIN clause."""
         return self.join(table, on, JoinType.INNER, schema, alias)
 
     def full_join(
-        self,
-        table: str,
-        on: Optional[Expression] = None,
-        schema: Optional[str] = None,
-        alias: Optional[str] = None
-    ) -> "QueryBuilder":
+            self,
+            table: str,
+            on: Optional[Expression] = None,
+            schema: Optional[str] = None,
+            alias: Optional[str] = None
+    ) -> "Query":
         """Add a FULL JOIN clause."""
         return self.join(table, on, JoinType.FULL, schema, alias)
 
     def cross_join(
-        self,
-        table: str,
-        schema: Optional[str] = None,
-        alias: Optional[str] = None
-    ) -> "QueryBuilder":
+            self,
+            table: str,
+            schema: Optional[str] = None,
+            alias: Optional[str] = None
+    ) -> "Query":
         """Add a CROSS JOIN clause."""
         return self.join(table, None, JoinType.CROSS, schema, alias)
 
-    def where(self, condition: Expression) -> "QueryBuilder":
+    def where(self, condition: Expression) -> "Query":
         """
         Add a WHERE clause condition.
 
@@ -192,7 +270,7 @@ class QueryBuilder:
             condition: Boolean expression for filtering
 
         Returns:
-            QueryBuilder: Self for method chaining
+            Query: Self for method chaining
         """
         if self._where_clause is None:
             self._where_clause = condition
@@ -203,7 +281,7 @@ class QueryBuilder:
 
         return self
 
-    def group_by(self, *columns: Union[str, Expression]) -> "QueryBuilder":
+    def group_by(self, *columns: Union[str, Expression]) -> "Query":
         """
         Add columns to the GROUP BY clause.
 
@@ -211,12 +289,12 @@ class QueryBuilder:
             *columns: Column names or expressions to group by
 
         Returns:
-            QueryBuilder: Self for method chaining
+            Query: Self for method chaining
         """
         self._group_by.extend(columns)
         return self
 
-    def having(self, condition: Expression) -> "QueryBuilder":
+    def having(self, condition: Expression) -> "Query":
         """
         Add a HAVING clause condition.
 
@@ -224,7 +302,7 @@ class QueryBuilder:
             condition: Boolean expression for filtering groups
 
         Returns:
-            QueryBuilder: Self for method chaining
+            Query: Self for method chaining
         """
         if self._having_clause is None:
             self._having_clause = condition
@@ -236,10 +314,10 @@ class QueryBuilder:
         return self
 
     def order_by(
-        self,
-        column: Union[str, Expression],
-        direction: str = OrderDirection.ASC
-    ) -> "QueryBuilder":
+            self,
+            column: Union[str, Expression],
+            direction: str = OrderDirection.ASC
+    ) -> "Query":
         """
         Add a column to the ORDER BY clause.
 
@@ -248,12 +326,12 @@ class QueryBuilder:
             direction: Sort direction (ASC or DESC)
 
         Returns:
-            QueryBuilder: Self for method chaining
+            Query: Self for method chaining
         """
         self._order_by.append((column, direction))
         return self
 
-    def limit(self, count: int) -> "QueryBuilder":
+    def limit(self, count: int) -> "Query":
         """
         Set the LIMIT clause.
 
@@ -261,12 +339,12 @@ class QueryBuilder:
             count: Maximum number of rows to return
 
         Returns:
-            QueryBuilder: Self for method chaining
+            Query: Self for method chaining
         """
         self._limit_count = count
         return self
 
-    def offset(self, count: int) -> "QueryBuilder":
+    def offset(self, count: int) -> "Query":
         """
         Set the OFFSET clause.
 
@@ -274,12 +352,12 @@ class QueryBuilder:
             count: Number of rows to skip
 
         Returns:
-            QueryBuilder: Self for method chaining
+            Query: Self for method chaining
         """
         self._offset_count = count
         return self
 
-    def with_(self, name: str, query: "QueryBuilder") -> "QueryBuilder":
+    def with_(self, name: str, query: "Query") -> "Query":
         """
         Add a Common Table Expression (CTE).
 
@@ -288,18 +366,19 @@ class QueryBuilder:
             query: QueryBuilder instance for the CTE query
 
         Returns:
-            QueryBuilder: Self for method chaining
+            Query: Self for method chaining
         """
         self._ctes.append((name, query))
         return self
 
-    def build(self) -> Tuple[str, List[Any]]:
-        """
-        Build the SQL query and return it with parameters.
 
-        Returns:
-            Tuple[str, List[Any]]: SQL string and parameter list
+    def query_ast(self) -> ast.SelectStmt:
         """
+                Build the SQL query and return it with parameters.
+
+                Returns:
+                    Tuple[str, List[Any]]: SQL string and parameter list
+                """
         # Reset parameters for this build
         self._parameters = []
         self._parameter_counter = 0
@@ -335,6 +414,10 @@ class QueryBuilder:
                 limitOffset=select_stmt.limitOffset,
                 limitOption=select_stmt.limitOption
             )
+        return select_stmt
+
+    def build(self) -> Tuple[str, List[Any]]:
+        select_stmt = self.query_ast()
 
         # Generate SQL
         sql = RawStream()(select_stmt)
@@ -374,7 +457,7 @@ class QueryBuilder:
             limit_offset = ast.A_Const(val=ast.Integer(ival=self._offset_count))
 
         return ast.SelectStmt(
-            distinctClause=[ast.A_Star()] if self._distinct else None,
+            distinctClause=self._distinct,
             targetList=target_list,
             fromClause=from_clause,
             whereClause=where_clause,
@@ -506,10 +589,10 @@ class QueryBuilder:
         return f"${self._parameter_counter}"
 
     async def execute(
-        self,
-        pool: asyncpg.Pool,
-        connection: Optional[asyncpg.Connection] = None,
-        model_class: Optional[type] = None
+            self,
+            pool: asyncpg.Pool,
+            connection: Optional[asyncpg.Connection] = None,
+            model_class: Optional[type] = None
     ) -> QueryResult:
         """
         Execute the query and return results.
@@ -542,10 +625,10 @@ class QueryBuilder:
         )
 
     async def execute_one(
-        self,
-        pool: asyncpg.Pool,
-        connection: Optional[asyncpg.Connection] = None,
-        model_class: Optional[type] = None
+            self,
+            pool: asyncpg.Pool,
+            connection: Optional[asyncpg.Connection] = None,
+            model_class: Optional[type] = None
     ) -> Optional[Dict[str, Any]]:
         """
         Execute the query and return the first result.

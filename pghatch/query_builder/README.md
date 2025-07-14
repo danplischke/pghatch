@@ -14,10 +14,10 @@ A comprehensive, type-safe PostgreSQL query builder using the native PostgreSQL 
 ## Quick Start
 
 ```python
-from pghatch.query_builder import QueryBuilder, col, func, and_, or_
+from pghatch.query_builder import Query, col, func, and_, or_
 
 # Simple query
-qb = QueryBuilder()
+qb = Query()
 query = (qb.select("id", "name", "email")
          .from_("users")
          .where(col("active").eq(True))
@@ -176,13 +176,13 @@ query = (qb
 
 ```python
 import asyncpg
-from pghatch.query_builder import QueryBuilder
+from pghatch.query_builder import Query
 
 # Create connection pool
 pool = await asyncpg.create_pool("postgresql://user:pass@localhost/db")
 
 # Build and execute query
-qb = QueryBuilder()
+qb = Query()
 query = qb.select("*").from_("users").where(col("active").eq(True))
 
 # Execute and get results
@@ -193,10 +193,12 @@ first_user = result.first()
 # With Pydantic models
 from pydantic import BaseModel
 
+
 class User(BaseModel):
     id: int
     name: str
     email: str
+
 
 result = await query.execute(pool, model_class=User)
 user_models = result.to_models()

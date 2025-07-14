@@ -2,9 +2,13 @@
 Type definitions for the query builder module.
 """
 
-from typing import Any, Dict, List, Optional, Union, TypeVar, Generic
-from pydantic import BaseModel
+from typing import Any, Dict, List, Optional, Union, TypeVar, Generic, TYPE_CHECKING
+
 from asyncpg import Connection, Pool
+
+if TYPE_CHECKING:
+    from pghatch.query_builder.expressions import Parameter
+
 
 T = TypeVar('T')
 
@@ -69,9 +73,10 @@ class QueryResult(Generic[T]):
 class ColumnReference:
     """Represents a column reference in a query."""
 
-    def __init__(self, name: str, table_alias: Optional[str] = None):
+    def __init__(self, name: Union[str, "Parameter"], table_alias: Optional[str] = None, column_alias: Optional[str] = None):
         self.name = name
         self.table_alias = table_alias
+        self.column_alias = column_alias
 
     @property
     def qualified_name(self) -> str:
@@ -79,6 +84,12 @@ class ColumnReference:
         if self.table_alias:
             return f"{self.table_alias}.{self.name}"
         return self.name
+
+
+    @property
+    def alias(self) -> str:
+        """Get the column alias if set, otherwise return the column name."""
+        return self.column_alias or self.name
 
 
 class TableReference:

@@ -7,7 +7,7 @@ bind user input and prevent SQL injection attacks.
 
 import asyncio
 import asyncpg
-from pghatch.query_builder import QueryBuilder, col, func, param, and_, or_
+from pghatch.query_builder import Query, col, func, param, and_, or_
 
 
 async def main():
@@ -23,7 +23,7 @@ async def main():
 
     # 1. Basic parameterized WHERE clause
     print("1. Basic parameterized query:")
-    qb1 = QueryBuilder()
+    qb1 = Query()
     qb1.select("id", "name", "email").from_("users").where(
         col("name").eq(param(user_name))  # Safe: user_name will be bound as parameter
     )
@@ -34,7 +34,7 @@ async def main():
 
     # 2. Multiple parameters
     print("2. Multiple parameters:")
-    qb2 = QueryBuilder()
+    qb2 = Query()
     qb2.select("*").from_("users").where(
         and_(
             col("name").eq(param(user_name)),
@@ -50,7 +50,7 @@ async def main():
     # 3. Parameters in IN clause
     print("3. Parameters in IN clause:")
     user_ids = [1, 2, 3, 4, 5]
-    qb3 = QueryBuilder()
+    qb3 = Query()
     qb3.select("name", "email").from_("users").where(
         col("id").in_([param(uid) for uid in user_ids])  # Each ID is parameterized
     )
@@ -61,7 +61,7 @@ async def main():
 
     # 4. Parameters in function calls
     print("4. Parameters in function calls:")
-    qb4 = QueryBuilder()
+    qb4 = Query()
     qb4.select(
         "name",
         func.concat("Hello, ", param(user_name)).as_("greeting")
@@ -75,7 +75,7 @@ async def main():
 
     # 5. Complex query with mixed parameters and literals
     print("5. Complex query with mixed parameters:")
-    qb5 = QueryBuilder()
+    qb5 = Query()
     qb5.select(
         "u.name",
         "u.email",
@@ -106,7 +106,7 @@ async def main():
     print("6. CASE expression with parameters:")
     min_age = 18
     max_age = 65
-    qb6 = QueryBuilder()
+    qb6 = Query()
     case_expr = (func.case()
                 .when(col("age").lt(param(min_age)), param("Minor"))
                 .when(col("age").lt(param(max_age)), param("Adult"))
@@ -149,7 +149,7 @@ def demonstrate_unsafe_vs_safe():
 
     # SAFE: Parameterized query
     print("✅ SAFE (using parameters):")
-    qb = QueryBuilder()
+    qb = Query()
     qb.select("*").from_("users").where(col("name").eq(param(user_input)))
     safe_sql, params = qb.build()
     print(f"SQL: {safe_sql}")
@@ -177,7 +177,7 @@ async def real_world_example():
     ):
         """Build a dynamic user search query with safe parameters."""
 
-        qb = QueryBuilder()
+        qb = Query()
         qb.select(
             "id",
             "name",

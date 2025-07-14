@@ -4,7 +4,7 @@ Simplified tests for the query builder module.
 
 import pytest
 from unittest.mock import Mock, AsyncMock
-from pghatch.query_builder import QueryBuilder, col, func, literal, and_, or_, not_
+from pghatch.query_builder import Query, col, func, literal, and_, or_, not_
 from pghatch.query_builder.types import QueryResult
 from pghatch.introspection.introspection import Introspection
 
@@ -14,7 +14,7 @@ class TestQueryBuilderBasic:
 
     def test_simple_select(self):
         """Test building a simple SELECT query."""
-        qb = QueryBuilder()
+        qb = Query()
         qb.select("id", "name", "email").from_("users")
 
         sql, params = qb.build()
@@ -28,7 +28,7 @@ class TestQueryBuilderBasic:
 
     def test_select_all(self):
         """Test SELECT * query."""
-        qb = QueryBuilder()
+        qb = Query()
         qb.select_all().from_("users")
 
         sql, params = qb.build()
@@ -38,7 +38,7 @@ class TestQueryBuilderBasic:
 
     def test_where_clause(self):
         """Test WHERE clause with expressions."""
-        qb = QueryBuilder()
+        qb = Query()
         qb.select("*").from_("users").where(col("active").eq(True))
 
         sql, params = qb.build()
@@ -48,7 +48,7 @@ class TestQueryBuilderBasic:
 
     def test_multiple_where_conditions(self):
         """Test multiple WHERE conditions combined with AND."""
-        qb = QueryBuilder()
+        qb = Query()
         qb.select("*").from_("users").where(col("active").eq(True)).where(col("age").gt(18))
 
         sql, params = qb.build()
@@ -60,7 +60,7 @@ class TestQueryBuilderBasic:
 
     def test_order_by(self):
         """Test ORDER BY clause."""
-        qb = QueryBuilder()
+        qb = Query()
         qb.select("*").from_("users").order_by("name").order_by("created_at", "DESC")
 
         sql, params = qb.build()
@@ -72,7 +72,7 @@ class TestQueryBuilderBasic:
 
     def test_limit_and_offset(self):
         """Test LIMIT and OFFSET clauses."""
-        qb = QueryBuilder()
+        qb = Query()
         qb.select("*").from_("users").limit(10).offset(20)
 
         sql, params = qb.build()
@@ -84,7 +84,7 @@ class TestQueryBuilderBasic:
 
     def test_distinct(self):
         """Test DISTINCT clause."""
-        qb = QueryBuilder()
+        qb = Query()
         qb.select("department").from_("employees").distinct()
 
         sql, params = qb.build()
@@ -93,7 +93,7 @@ class TestQueryBuilderBasic:
 
     def test_string_representation(self):
         """Test string representation of QueryBuilder."""
-        qb = QueryBuilder()
+        qb = Query()
         qb.select("*").from_("users").where(col("active").eq(True))
 
         sql_str = str(qb)
@@ -109,7 +109,7 @@ class TestQueryBuilderBasic:
         mock_introspection = Mock(spec=Introspection)
         mock_introspection.procs = []
 
-        qb = QueryBuilder(introspection=mock_introspection)
+        qb = Query(introspection=mock_introspection)
 
         assert qb.introspection is mock_introspection
         assert qb.functions.introspection is mock_introspection
