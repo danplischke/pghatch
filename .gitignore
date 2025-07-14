@@ -797,3 +797,9 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 .idea/
 
+# Benchmark results and temporary files
+benchmark_results/
+*.benchmark.json
+*.benchmark.html
+benchmark_report_*
+
