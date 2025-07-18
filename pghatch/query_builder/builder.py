@@ -4,7 +4,6 @@ Main QueryBuilder class for building PostgreSQL queries using pglast AST.
 This module provides the primary interface for constructing type-safe,
 parameterized PostgreSQL queries.
 """
-
 from typing import Any, Dict, List, Optional, Union, Tuple
 
 import asyncpg
@@ -12,17 +11,46 @@ from pglast import ast
 from pglast.enums import JoinType as PgJoinType, SortByDir, LimitOption
 from pglast.stream import RawStream
 
-from pghatch.introspection.introspection import Introspection
 from .expressions import (
-    Expression, FunctionExpression, ResTargetExpression
+    Expression, FunctionExpression, ResTargetExpression, Parameter, ColumnExpression
 )
-from .functions import PostgreSQLFunctions
 from .types import (
     QueryResult, TableReference, JoinType, OrderDirection
 )
 
 
-class QueryBuilder:
+def select(
+        *columns: Union[str, Expression, FunctionExpression, Parameter, ResTargetExpression]
+) -> "Query":
+    """
+    Create a new Query instance with a SELECT clause.
+
+    Args:
+        *columns: Column names (strings), expressions, or function calls
+
+    Returns:
+        Query: New Query instance with SELECT clause
+    """
+    query = Query()
+    return query.select(*columns)
+
+
+def select_all() -> "Query":
+    """
+    Create a new Query instance with SELECT *.
+from .functions import PostgreSQLFunctions
+from .types import (
+    QueryResult, TableReference, JoinType, OrderDirection
+)
+
+    Returns:
+        Query: New Query instance with SELECT *
+    """
+    query = Query()
+    return query.select_all()
+
+
+class Query:
     """
     Main query builder class for constructing PostgreSQL queries.
 
@@ -30,9 +58,7 @@ class QueryBuilder:
     queries using the PostgreSQL AST via pglast.
     """
 
-    def __init__(self, introspection: Optional[Introspection] = None):
-        self.introspection = introspection
-        self.functions = PostgreSQLFunctions(introspection)
+    def __init__(self):
 
         # Query components
         self._select_list: List[Union[str, Expression, ResTargetExpression]] = []

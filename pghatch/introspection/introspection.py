@@ -1,9 +1,7 @@
-import json
 from typing import Any
 
 from asyncpg import Connection
 from pydantic import BaseModel
-from psycopg import connect
 
 from pghatch.introspection.tables import (
     PgDatabase,

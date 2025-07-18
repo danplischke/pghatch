@@ -5,21 +5,25 @@ This module provides functions and classes for building SQL expressions
 using the PostgreSQL AST via pglast.
 """
 
-from typing import Any, List, Optional, Union
-from pglast import ast
-from pglast.enums import BoolExprType, A_Expr_Kind, NullTestType
+from typing import Any, List, Optional, Union, TYPE_CHECKING
 
-from .types import ColumnReference
+from pglast import ast
+from pglast.enums import BoolExprType, A_Expr_Kind, NullTestType, SubLinkType
+
+from pghatch.query_builder.types import ColumnReference
+
+if TYPE_CHECKING:
+    from pghatch.query_builder import Query
 
 
 class Parameter:
     """Represents a parameterized value for safe SQL injection prevention."""
 
-    def __init__(self, value: Any):
-        self.value = value
+    def __init__(self, name: str):
+        self.name = name
 
     def __repr__(self):
-        return f"Parameter({self.value!r})"
+        return f"Parameter({self.name!r})"
 
 
 class Expression:
@@ -48,14 +52,31 @@ class Expression:
 class ColumnExpression(Expression):
     """Expression representing a column reference."""
 
-    def __init__(self, name: str, table_alias: Optional[str] = None):
+    def __init__(self, name: str | Parameter, table_alias: Optional[str] = None):
         self.column_ref = ColumnReference(name, table_alias)
 
         # Build the AST node
         fields = []
         if table_alias:
             fields.append(ast.String(sval=table_alias))
-        fields.append(ast.String(sval=name))
+        if isinstance(name, Parameter):
+            fields.append(ast.String(sval=name.value))
+        elif isinstance(name, str):
+            if "." in name:
+                # Handle qualified names like "schema.table.column"
+                parts = name.split(".")
+                if len(parts) == 3:
+                    schema, table, col_name = parts
+                    fields.extend(
+                        [ast.String(sval=schema), ast.String(sval=table), ast.String(sval=col_name)]
+                    )
+                elif len(parts) == 2:
+                    table, col_name = parts
+                    fields.extend([ast.String(sval=table), ast.String(sval=col_name)])
+                else:
+                    raise ValueError("Invalid column format. Expected 'schema.table.column' or 'table.column'.")
+            else:
+                fields.append(ast.String(sval=name))
 
         node = ast.ColumnRef(fields=fields)
         super().__init__(node)
@@ -92,22 +113,23 @@ class ColumnExpression(Expression):
         """Create an ILIKE comparison."""
         return _create_comparison(self, "~~*", pattern)
 
-    def in_(self, values: Union[List[Any], "QueryBuilder"]) -> "Expression":
+    def in_(self, values: Union[List[Any], "Query", "Parameter"]) -> "Expression":
         """Create an IN comparison."""
-        from .builder import QueryBuilder
+        from .builder import Query
 
-        if isinstance(values, QueryBuilder):
-            # For subqueries, create a simple test that validates the structure
-            # without causing pglast parsing issues
-            subquery_sql, subquery_params = values.build()
-
-            # For testing purposes, create a simple comparison that will pass
-            # In a real implementation, this would need proper SubLink support
+        if isinstance(values, Query):
+            node = ast.SubLink(
+            subLinkType=SubLinkType.ANY_SUBLINK,
+            subselect=values.query_ast(),
+            testexpr=self.node,
+            )
+        elif isinstance(values, Parameter):
+            # If it's a parameter, we treat it as a single value
             node = ast.A_Expr(
-                kind=A_Expr_Kind.AEXPR_OP,
+                kind=A_Expr_Kind.AEXPR_IN,
                 name=[ast.String(sval="=")],
                 lexpr=self.node,
-                rexpr=ast.A_Const(val=ast.String(sval="subquery_placeholder"))
+                rexpr=_value_to_node(values.value)
             )
         else:
             # List of values - wrap in a list structure that pglast can handle
@@ -147,13 +169,14 @@ class FunctionExpression(Expression):
     """Expression representing a function call."""
 
     def __init__(
-        self,
-        name: str,
-        args: List[Union[Expression, Any]],
-        schema: Optional[str] = None,
-        distinct: bool = False,
-        agg_filter: Optional[Expression] = None,
-        agg_order: Optional[List[str]] = None
+            self,
+            name: str,
+            args: List[Union[Expression, Any]] | None = None,
+            schema: Optional[str] = None,
+            distinct: bool = False,
+            agg_filter: Optional[Expression] = None,
+            agg_order: Optional[List[str]] = None,
+            agg_star: Optional[bool] = False
     ):
         self.name = name
         self.schema = schema
@@ -166,19 +189,21 @@ class FunctionExpression(Expression):
 
         # Convert arguments to AST nodes
         arg_nodes = []
-        for arg in args:
-            if isinstance(arg, Expression):
-                arg_nodes.append(arg.node)
-            else:
-                arg_nodes.append(_value_to_node(arg))
+        if args:
+            for arg in args:
+                if isinstance(arg, Expression):
+                    arg_nodes.append(arg.node)
+                else:
+                    arg_nodes.append(_value_to_node(arg))
 
         # Build the function call node
         node = ast.FuncCall(
             funcname=funcname,
-            args=arg_nodes,
+            args=arg_nodes if len(arg_nodes) > 0 else None,
             agg_distinct=distinct,
             agg_filter=agg_filter.node if agg_filter else None,
-            agg_order=_build_order_by(agg_order) if agg_order else None
+            agg_order=_build_order_by(agg_order) if agg_order else None,
+            agg_star=agg_star
         )
 
         super().__init__(node)
@@ -268,7 +293,7 @@ class LiteralExpression(Expression):
         super().__init__(node)
 
 
-def col(name: str, table_alias: Optional[str] = None) -> ColumnExpression:
+def col(name: str | Parameter, table_alias: Optional[str] = None) -> ColumnExpression:
     """Create a column reference expression."""
     return ColumnExpression(name, table_alias)
 
@@ -346,10 +371,9 @@ class FunctionRegistry:
     @staticmethod
     def count(expr: Optional[Union[Expression, str]] = None, distinct: bool = False) -> FunctionExpression:
         """COUNT aggregate function."""
-        if expr is None:
+        if expr is None or expr == "*":
             # COUNT(*)
-            args = [ast.A_Star()]
-            return FunctionExpression("count", args, distinct=distinct)
+            return FunctionExpression("count", None, agg_star=True, distinct=distinct)
         elif isinstance(expr, str):
             args = [col(expr)]
         else:
@@ -495,7 +519,7 @@ def _create_comparison(left: Expression, operator: str, right: Any) -> Expressio
     return Expression(node)
 
 
-def _value_to_node(value: Any, query_builder: Optional["QueryBuilder"] = None) -> ast.Node:
+def _value_to_node(value: Any, query_builder: Optional["Query"] = None) -> ast.Node:
     """Convert a Python value to an AST node."""
     if value is None:
         return ast.A_Const()  # NULL value

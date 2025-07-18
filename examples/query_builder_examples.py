@@ -7,7 +7,7 @@ complex PostgreSQL queries using the native AST via pglast.
 
 import asyncio
 import asyncpg
-from pghatch.query_builder import QueryBuilder, col, func, literal, and_, or_, not_
+from pghatch.query_builder import Query, col, func, literal, and_, or_, not_
 from pghatch.introspection.introspection import make_introspection_query
 
 
@@ -16,19 +16,19 @@ async def basic_examples():
     print("=== Basic Query Examples ===\n")
 
     # Simple SELECT
-    qb = QueryBuilder()
+    qb = Query()
     query = qb.select("id", "name", "email").from_("users")
     sql, params = query.build()
     print(f"Simple SELECT:\n{sql}\n")
 
     # SELECT with WHERE
-    qb = QueryBuilder()
+    qb = Query()
     query = qb.select("*").from_("users").where(col("active").eq(True))
     sql, params = query.build()
     print(f"SELECT with WHERE:\n{sql}\n")
 
     # SELECT with multiple conditions
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select("*")
              .from_("users")
              .where(col("active").eq(True))
@@ -42,7 +42,7 @@ async def join_examples():
     print("=== JOIN Examples ===\n")
 
     # LEFT JOIN
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select("u.name", "p.title", "p.created_at")
              .from_("users", alias="u")
              .left_join("posts", on=col("u.id").eq(col("p.user_id")), alias="p")
@@ -52,7 +52,7 @@ async def join_examples():
     print(f"LEFT JOIN with ORDER BY:\n{sql}\n")
 
     # Multiple JOINs
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select("u.name", "p.title", "c.content")
              .from_("users", alias="u")
              .inner_join("posts", on=col("u.id").eq(col("p.user_id")), alias="p")
@@ -67,7 +67,7 @@ async def aggregate_examples():
     print("=== Aggregate Function Examples ===\n")
 
     # GROUP BY with aggregates
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select("department", func.count("*").as_("employee_count"), func.avg("salary").as_("avg_salary"))
              .from_("employees")
              .group_by("department")
@@ -77,7 +77,7 @@ async def aggregate_examples():
     print(f"GROUP BY with aggregates:\n{sql}\n")
 
     # Complex aggregation with JOINs
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select(
                 "u.name",
                 func.count("o.id").as_("order_count"),
@@ -100,7 +100,7 @@ async def function_examples():
     print("=== PostgreSQL Function Examples ===\n")
 
     # String functions
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select(
                 "id",
                 func.upper("name").as_("upper_name"),
@@ -113,7 +113,7 @@ async def function_examples():
     print(f"String functions:\n{sql}\n")
 
     # Date functions
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select(
                 "id",
                 "created_at",
@@ -127,7 +127,7 @@ async def function_examples():
     print(f"Date functions:\n{sql}\n")
 
     # JSON functions
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select(
                 "id",
                 func.json_extract_path_text("metadata", "title").as_("meta_title"),
@@ -144,7 +144,7 @@ async def complex_expression_examples():
     print("=== Complex Expression Examples ===\n")
 
     # Complex WHERE with AND/OR
-    qb = QueryBuilder()
+    qb = Query()
     condition = and_(
         col("active").eq(True),
         or_(
@@ -161,7 +161,7 @@ async def complex_expression_examples():
     print(f"Complex WHERE with AND/OR/NOT:\n{sql}\n")
 
     # CASE expression
-    qb = QueryBuilder()
+    qb = Query()
     case_expr = (func.case()
                 .when(col("age").lt(18), "Minor")
                 .when(col("age").lt(65), "Adult")
@@ -174,7 +174,7 @@ async def complex_expression_examples():
     print(f"CASE expression:\n{sql}\n")
 
     # IN and NOT IN
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select("*")
              .from_("products")
              .where(
@@ -193,7 +193,7 @@ async def window_function_examples():
     print("=== Window Function Examples ===\n")
 
     # ROW_NUMBER and RANK
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select(
                 "name",
                 "salary",
@@ -208,7 +208,7 @@ async def window_function_examples():
     print(f"Window functions (ROW_NUMBER, RANK):\n{sql}\n")
 
     # LAG and LEAD
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select(
                 "date",
                 "sales",
@@ -226,7 +226,7 @@ async def array_examples():
     print("=== Array Function Examples ===\n")
 
     # Array functions
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select(
                 "id",
                 "tags",
@@ -239,7 +239,7 @@ async def array_examples():
     print(f"Array functions:\n{sql}\n")
 
     # UNNEST
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select("id", func.unnest("tags").as_("tag"))
              .from_("posts")
              .where(col("published").eq(True)))
@@ -252,7 +252,7 @@ async def pagination_examples():
     print("=== Pagination Examples ===\n")
 
     # Basic pagination
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select("*")
              .from_("users")
              .where(col("active").eq(True))
@@ -263,7 +263,7 @@ async def pagination_examples():
     print(f"Basic pagination (page 3, 20 per page):\n{sql}\n")
 
     # Cursor-based pagination using window functions
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select(
                 "*",
                 func.row_number().as_("row_num")
@@ -280,7 +280,7 @@ async def conditional_examples():
     print("=== Conditional Function Examples ===\n")
 
     # COALESCE
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select(
                 "id",
                 func.coalesce("nickname", "first_name", "username").as_("display_name"),
@@ -291,7 +291,7 @@ async def conditional_examples():
     print(f"COALESCE and NULLIF:\n{sql}\n")
 
     # GREATEST and LEAST
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select(
                 "id",
                 func.greatest("score1", "score2", "score3").as_("best_score"),
@@ -310,7 +310,7 @@ async def execute_with_pool_example():
     # pool = await asyncpg.create_pool("postgresql://user:pass@localhost/db")
 
     # Mock execution for demonstration
-    qb = QueryBuilder()
+    qb = Query()
     query = (qb.select("id", "name", "email")
              .from_("users")
              .where(col("active").eq(True))

@@ -3,7 +3,7 @@ from pghatch.query_builder.expressions import col, func, literal, param, and_, o
 from pghatch.query_builder.types import QueryResult, ExecutionContext
 
 __all__ = [
-    "QueryBuilder",
+    "Query",
     "col",
     "func",
     "literal",
