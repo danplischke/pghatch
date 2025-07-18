@@ -83,13 +83,13 @@ class Introspection(BaseModel):
         self.PG_CONSTRAINT = self.oid_by_catalog.get("pg_constraint")
 
         if not all(
-                [
-                    self.PG_NAMESPACE,
-                    self.PG_CLASS,
-                    self.PG_PROC,
-                    self.PG_TYPE,
-                    self.PG_CONSTRAINT,
-                ]
+            [
+                self.PG_NAMESPACE,
+                self.PG_CLASS,
+                self.PG_PROC,
+                self.PG_TYPE,
+                self.PG_CONSTRAINT,
+            ]
         ):
             raise ValueError(
                 "Invalid introspection results; could not determine the ids of the system catalogs"
@@ -101,8 +101,8 @@ class Introspection(BaseModel):
 
             for dependency in self.depends:
                 if (
-                        dependency.deptype == "e"
-                        and self.oid_by_catalog.get("pg_extension") == dependency.refclassid
+                    dependency.deptype == "e"
+                    and self.oid_by_catalog.get("pg_extension") == dependency.refclassid
                 ):
                     if dependency.classid == self.oid_by_catalog.get("pg_proc"):
                         extension_proc_oids.add(dependency.objid)
@@ -166,7 +166,7 @@ class Introspection(BaseModel):
         return [i for i in self.indexes if getattr(i, "indrelid", None) == id]
 
     def get_description(
-            self, classoid: str, objoid: str, objsubid: int | None = None
+        self, classoid: str, objoid: str, objsubid: int | None = None
     ) -> str | None:
         if objsubid is None:
             desc = next(
@@ -183,19 +183,19 @@ class Introspection(BaseModel):
                     d
                     for d in self.descriptions
                     if d.classoid == classoid
-                       and d.objoid == objoid
-                       and d.objsubid == objsubid
+                    and d.objoid == objoid
+                    and d.objsubid == objsubid
                 ),
                 None,
             )
         return getattr(desc, "description", None) if desc else None
 
     def get_tags_and_description(
-            self,
-            classoid: str,
-            objoid: str,
-            objsubid: int | None = None,
-            fallback: dict | None = None,
+        self,
+        classoid: str,
+        objoid: str,
+        objsubid: int | None = None,
+        fallback: dict | None = None,
     ) -> dict:
         description = self.get_description(classoid, objoid, objsubid)
         if description is None and fallback:
@@ -217,9 +217,7 @@ class Introspection(BaseModel):
         )
 
     def get_proc(self, id: str) -> "PgProc | None":
-        return next(
-            (c for c in self.procs if getattr(c, "oid", None) == id), None
-        )
+        return next((c for c in self.procs if getattr(c, "oid", None) == id), None)
 
     def get_roles(self, by: dict) -> "PgRoles | None":
         return next(

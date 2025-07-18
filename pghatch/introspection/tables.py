@@ -661,10 +661,26 @@ class PgAttribute(SQLModel, table=True):
         """
         return introspection.get_acl(introspection.PG_CLASS, self.attrelid, self.attnum)
 
-    def get_py_type(self, introspection: "Introspection") -> tuple[type, UnionType | type]:
+
+    def is_nullable(self) -> bool:
+        return self.attnotnull is False
+
+    def get_py_type(
+        self, introspection: "Introspection"
+    ) -> type:
         from pghatch.introspection.pgtypes import get_py_type
 
         return get_py_type(introspection=introspection, attr=self)
+
+    def get_py_type_not_nullable(self,
+        introspection: "Introspection"
+    ) -> type:
+        """
+        Get the Python type for this attribute, assuming it is not nullable.
+        """
+        from pghatch.introspection.pgtypes import get_py_type_not_nullable
+
+        return get_py_type_not_nullable(introspection=introspection, attr=self)
 
 
 class PgAuthMembers(SQLModel, table=True):
@@ -818,18 +834,17 @@ class PgClass(SQLModel, table=True):
         self, introspection: "Introspection"
     ) -> Optional[dict]:
         return introspection.get_tags_and_description(
-            introspection.PG_CLASS, self.oid, 0, {"classoid": introspection.PG_TYPE, "objoid": self.reltype}
+            introspection.PG_CLASS,
+            self.oid,
+            0,
+            {"classoid": introspection.PG_TYPE, "objoid": self.reltype},
         )
 
-    def get_tags(
-        self, introspection: "Introspection"
-    ) -> Optional[list]:
+    def get_tags(self, introspection: "Introspection") -> Optional[list]:
         tags_and_desc = self.get_tags_and_description(introspection)
         return tags_and_desc.get("tags") if tags_and_desc else None
 
-    def get_acl(
-        self, introspection: "Introspection"
-    ) -> list["AclObject"]:
+    def get_acl(self, introspection: "Introspection") -> list["AclObject"]:
         from pghatch.introspection.acl import parse_acls
 
         objtype = (

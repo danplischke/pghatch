@@ -88,10 +88,12 @@ create event trigger pghatch_watch_drop
 """
 
 
-async def watch_schema(pool: asyncpg.Pool | None = None, check_connection_interval: int = 5):
+async def watch_schema(
+    restart: callable, pool: asyncpg.Pool | None = None, check_connection_interval: int = 5,
+):
     async with pool.acquire() as conn:
         await conn.execute(WATCH_SQL)
-        await conn.add_listener('pghatch_watch', self.restart)
+        await conn.add_listener("pghatch_watch", restart)
         logging.warning("Watching schema changes...")
         while True:
             await asyncio.sleep(check_connection_interval)

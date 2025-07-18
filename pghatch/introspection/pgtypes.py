@@ -9,6 +9,7 @@ from pghatch.introspection.tables import PgType, PgAttribute
 
 __all__ = (
     "get_py_type",
+    "get_py_type_not_nullable",
     "Interval",
     "Point",
     "Line",
@@ -23,13 +24,13 @@ __all__ = (
 # --- Custom Classes for Complex Types ---
 class Interval:
     def __init__(
-        self,
-        years: int = 0,
-        months: int = 0,
-        days: int = 0,
-        hours: int = 0,
-        minutes: int = 0,
-        seconds: float = 0.0,
+            self,
+            years: int = 0,
+            months: int = 0,
+            days: int = 0,
+            hours: int = 0,
+            minutes: int = 0,
+            seconds: float = 0.0,
     ):
         self.years = years
         self.months = months
@@ -105,21 +106,21 @@ class Circle:
 
 
 def _get_nullable_type(
-    typ: type,
-    pg_type: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        typ: type,
+        pg_type: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> UnionType | type:
     if (attr is not None and not attr.attnotnull) or (
-        pg_type is not None and not pg_type.typnotnull
+            pg_type is not None and not pg_type.typnotnull
     ):
         return typ | None
     return typ
 
 
 def _get_array_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     """
     Returns the Python type for a PostgreSQL array based on the element type.
@@ -142,9 +143,9 @@ def _get_array_type(
 
 
 def _get_composite_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     """
     Returns the Python type for a PostgreSQL composite type.
@@ -163,9 +164,7 @@ def _get_composite_type(
     for attr in attrs:
         if attr.attisdropped:
             continue
-        py_type = get_py_type(
-            introspection=introspection, typ=attr.atttypid, attr=attr
-        )
+        py_type = get_py_type(introspection=introspection, typ=attr.atttypid, attr=attr)
         field_definitions[attr.attname] = (
             py_type,
             Field(description=attr.get_description(introspection)),
@@ -183,45 +182,45 @@ def _get_composite_type(
 
 # Array type
 def _get_array_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     return _get_array_type(introspection, typ, attr)
 
 
 # Boolean type
 def _get_boolean_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     return bool
 
 
 # Composite type
 def _get_composite_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     return _get_composite_type(introspection, typ, attr)
 
 
 # Date/Time type
 def _get_datetime_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     return datetime.datetime
 
 
 # Enum type
 def _get_enum_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     from enum import Enum
 
@@ -232,9 +231,9 @@ def _get_enum_py_type(
 
 # Geometric type
 def _get_geometrics_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     if typ is None:
         typ = attr.get_type(introspection)
@@ -259,18 +258,18 @@ def _get_geometrics_py_type(
 
 # Network address type
 def _get_network_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     return str
 
 
 # Numeric type
 def _get_numeric_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     if typ is None:
         typ = attr.get_type(introspection)
@@ -287,18 +286,18 @@ def _get_numeric_py_type(
 
 # Pseudo type
 def _get_pseudo_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     return str
 
 
 # Range type
 def _get_range_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     if typ is None:
         typ = attr.get_type(introspection)
@@ -310,9 +309,9 @@ def _get_range_py_type(
 
 # String type
 def _get_string_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     if typ is None:
         typ = attr.get_type(introspection)
@@ -329,9 +328,9 @@ def _get_string_py_type(
 
 # Timespan types
 def _get_timespan_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     if typ is None:
         typ = attr.get_type(introspection)
@@ -339,13 +338,13 @@ def _get_timespan_py_type(
     if typ.typname == "interval":
         return Interval
     elif typ.typname in (
-        "date",
-        "timestamp",
-        "timestamp without time zone",
-        "timestamp with time zone",
-        "time",
-        "time without time zone",
-        "time with time zone",
+            "date",
+            "timestamp",
+            "timestamp without time zone",
+            "timestamp with time zone",
+            "time",
+            "time without time zone",
+            "time with time zone",
     ):
         return datetime.datetime
     raise TypeError(f"Unsupported timespan type: {typ.typname}")
@@ -353,9 +352,9 @@ def _get_timespan_py_type(
 
 # User-defined type
 def _get_user_defined_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     from pydantic import Json
 
@@ -375,9 +374,9 @@ def _get_user_defined_py_type(
 
 # Bit-string types
 def _get_bitstring_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     if typ is None:
         typ = attr.get_type(introspection)
@@ -389,18 +388,18 @@ def _get_bitstring_py_type(
 
 # Unknown type
 def _get_unknown_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     return str
 
 
 # Custom types
 def _get_custom_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     if typ is None:
         typ = attr.get_type(introspection)
@@ -415,24 +414,24 @@ def _get_custom_py_type(
 
 # Internal use types
 def _get_internal_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     if typ is None:
         typ = attr.get_type(introspection)
 
     if typ.typname in (
-        "regproc",
-        "regprocedure",
-        "regoper",
-        "regoperator",
-        "regclass",
-        "regtype",
-        "regrole",
-        "regnamespace",
-        "regconfig",
-        "regdictionary",
+            "regproc",
+            "regprocedure",
+            "regoper",
+            "regoperator",
+            "regclass",
+            "regtype",
+            "regrole",
+            "regnamespace",
+            "regconfig",
+            "regdictionary",
     ):
         return int
     else:
@@ -440,9 +439,9 @@ def _get_internal_py_type(
 
 
 def _get_py_type_by_category(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
 ) -> type:
     """
     Returns the Python type based on the PostgreSQL type category.
@@ -503,8 +502,17 @@ def _get_py_type_by_category(
 
 
 def get_py_type(
-    introspection: "Introspection",
-    typ: Optional["PgType"] = None,
-    attr: Optional["PgAttribute"] | None = None,
-) -> (type, UnionType | type):
-    return _get_nullable_type(_get_py_type_by_category(introspection, typ, attr), typ, attr)
+        introspection: "Introspection",
+        typ: Optional["PgType"] = None,
+        attr: Optional["PgAttribute"] | None = None,
+) -> type:
+    return _get_nullable_type(
+        _get_py_type_by_category(introspection, typ, attr), typ, attr
+    )
+
+
+def get_py_type_not_nullable(introspection: "Introspection",
+                             typ: Optional["PgType"] = None,
+                             attr: Optional["PgAttribute"] | None = None,
+                             ) -> type:
+    return _get_py_type_by_category(introspection, typ, attr)

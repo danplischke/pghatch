@@ -13,10 +13,9 @@ from pghatch.router.watch import watch_schema
 
 
 class SchemaRouter(APIRouter):
-    def __init__(self,
-                 connection_str: str | None = None,
-                 schema: str | None = None,
-                 **kwargs):
+    def __init__(
+        self, connection_str: str | None = None, schema: str | None = None, **kwargs
+    ):
         super().__init__(**kwargs, lifespan=self.lifespan)
 
         logging.info(f"Initializing SchemaRouter for schema: {schema}")
@@ -34,7 +33,9 @@ class SchemaRouter(APIRouter):
         self._app = app
         self._pool = await asyncpg.create_pool(dsn=self.connection_str)
 
-        logging.warning(f"Starting SchemaRouter for schema: {self.schema}", )
+        logging.warning(
+            f"Starting SchemaRouter for schema: {self.schema}",
+        )
         await self.start()
 
         self.initialized = True
@@ -44,8 +45,9 @@ class SchemaRouter(APIRouter):
 
     async def watch_schema(self):
         try:
-            await watch_schema(self._pool, self.check_connection_interval)
-        except (Exception,):
+            await watch_schema(self.restart, self._pool, self.check_connection_interval)
+        except (Exception,) as e:
+            print(e)
             logging.error("Connection lost")
             await self.watch()
 
@@ -55,7 +57,9 @@ class SchemaRouter(APIRouter):
         self._watcher = asyncio.create_task(self.watch_schema())
 
     async def restart(self, a, b, c, d):
-        logging.info(f"Restarting SchemaRouter for schema: {self.schema}", )
+        logging.info(
+            f"Restarting SchemaRouter for schema: {self.schema}",
+        )
         await self.start()
 
     async def start(self):
@@ -69,13 +73,15 @@ class SchemaRouter(APIRouter):
             introspection = await make_introspection_query(conn)
             for cls in introspection.classes:
                 if introspection.get_namespace(
-                        cls.relnamespace
+                    cls.relnamespace
                 ).nspname == self.schema and cls.relkind in ("r", "v", "m", "f", "p"):
-                    TableViewResolver(oid=cls.oid, introspection=introspection).mount(self)
+                    TableViewResolver(oid=cls.oid, introspection=introspection).mount(
+                        self
+                    )
 
             for proc in introspection.procs:
                 if introspection.get_namespace(
-                        proc.pronamespace
+                    proc.pronamespace
                 ).nspname == self.schema and proc.prokind in ("f", "p"):
                     ProcResolver(oid=proc.oid, introspection=introspection).mount(self)
 

@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from pghatch.query_builder.expressions import Parameter
 
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 class ExecutionContext:
@@ -41,7 +41,7 @@ class QueryResult(Generic[T]):
         sql: str,
         parameters: List[Any],
         row_count: int,
-        model_class: Optional[type] = None
+        model_class: Optional[type] = None,
     ):
         self.rows = rows
         self.sql = sql
@@ -73,7 +73,12 @@ class QueryResult(Generic[T]):
 class ColumnReference:
     """Represents a column reference in a query."""
 
-    def __init__(self, name: Union[str, "Parameter"], table_alias: Optional[str] = None, column_alias: Optional[str] = None):
+    def __init__(
+        self,
+        name: Union[str, "Parameter"],
+        table_alias: Optional[str] = None,
+        column_alias: Optional[str] = None,
+    ):
         self.name = name
         self.table_alias = table_alias
         self.column_alias = column_alias
@@ -85,7 +90,6 @@ class ColumnReference:
             return f"{self.table_alias}.{self.name}"
         return self.name
 
-
     @property
     def alias(self) -> str:
         """Get the column alias if set, otherwise return the column name."""
@@ -96,10 +100,7 @@ class TableReference:
     """Represents a table reference in a query."""
 
     def __init__(
-        self,
-        name: str,
-        schema: Optional[str] = None,
-        alias: Optional[str] = None
+        self, name: str, schema: Optional[str] = None, alias: Optional[str] = None
     ):
         self.name = name
         self.schema = schema
@@ -120,6 +121,7 @@ class TableReference:
 
 class JoinType:
     """Enumeration of SQL join types."""
+
     INNER = "INNER"
     LEFT = "LEFT"
     RIGHT = "RIGHT"
@@ -129,6 +131,7 @@ class JoinType:
 
 class OrderDirection:
     """Enumeration of SQL order directions."""
+
     ASC = "ASC"
     DESC = "DESC"
 
@@ -141,7 +144,7 @@ class AggregateFunction:
         name: str,
         args: List[Union[str, ColumnReference]],
         distinct: bool = False,
-        filter_clause: Optional[Any] = None
+        filter_clause: Optional[Any] = None,
     ):
         self.name = name
         self.args = args

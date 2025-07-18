@@ -8,10 +8,7 @@ using the PostgreSQL AST via pglast.
 from typing import Any, List, Optional, Union, TYPE_CHECKING
 
 from pglast import ast
-from pglast.ast import ResTarget
 from pglast.enums import BoolExprType, A_Expr_Kind, NullTestType, SubLinkType
-
-from pghatch.query_builder.types import ColumnReference
 
 if TYPE_CHECKING:
     from pghatch.query_builder import Query
@@ -71,13 +68,19 @@ class ColumnExpression(Expression):
                 if len(parts) == 3:
                     schema, table, col_name = parts
                     fields.extend(
-                        [ast.String(sval=schema), ast.String(sval=table), ast.String(sval=col_name)]
+                        [
+                            ast.String(sval=schema),
+                            ast.String(sval=table),
+                            ast.String(sval=col_name),
+                        ]
                     )
                 elif len(parts) == 2:
                     table, col_name = parts
                     fields.extend([ast.String(sval=table), ast.String(sval=col_name)])
                 else:
-                    raise ValueError("Invalid column format. Expected 'schema.table.column' or 'table.column'.")
+                    raise ValueError(
+                        "Invalid column format. Expected 'schema.table.column' or 'table.column'."
+                    )
             else:
                 fields.append(ast.String(sval=name))
 
@@ -132,7 +135,7 @@ class ColumnExpression(Expression):
                 kind=A_Expr_Kind.AEXPR_IN,
                 name=[ast.String(sval="=")],
                 lexpr=self.node,
-                rexpr=_value_to_node(values.value)
+                rexpr=_value_to_node(values.name),
             )
         else:
             # List of values - wrap in a list structure that pglast can handle
@@ -143,24 +146,18 @@ class ColumnExpression(Expression):
                 kind=A_Expr_Kind.AEXPR_IN,
                 name=[ast.String(sval="=")],
                 lexpr=self.node,
-                rexpr=value_nodes
+                rexpr=value_nodes,
             )
         return Expression(node)
 
     def is_null(self) -> "Expression":
         """Create an IS NULL comparison."""
-        node = ast.NullTest(
-            arg=self.node,
-            nulltesttype=NullTestType.IS_NULL
-        )
+        node = ast.NullTest(arg=self.node, nulltesttype=NullTestType.IS_NULL)
         return Expression(node)
 
     def is_not_null(self) -> "Expression":
         """Create an IS NOT NULL comparison."""
-        node = ast.NullTest(
-            arg=self.node,
-            nulltesttype=NullTestType.IS_NOT_NULL
-        )
+        node = ast.NullTest(arg=self.node, nulltesttype=NullTestType.IS_NOT_NULL)
         return Expression(node)
 
     def as_(self, alias: str) -> "ResTargetExpression":
@@ -172,14 +169,14 @@ class FunctionExpression(Expression):
     """Expression representing a function call."""
 
     def __init__(
-            self,
-            name: str,
-            args: List[Union[Expression, Any]] | None = None,
-            schema: Optional[str] = None,
-            distinct: bool = False,
-            agg_filter: Optional[Expression] = None,
-            agg_order: Optional[List[str]] = None,
-            agg_star: Optional[bool] = False
+        self,
+        name: str,
+        args: List[Union[Expression, Any]] | None = None,
+        schema: Optional[str] = None,
+        distinct: bool = False,
+        agg_filter: Optional[Expression] = None,
+        agg_order: Optional[List[str]] = None,
+        agg_star: Optional[bool] = False,
     ):
         self.name = name
         self.schema = schema
@@ -206,7 +203,7 @@ class FunctionExpression(Expression):
             agg_distinct=distinct,
             agg_filter=agg_filter.node if agg_filter else None,
             agg_order=_build_order_by(agg_order) if agg_order else None,
-            agg_star=agg_star
+            agg_star=agg_star,
         )
 
         super().__init__(node)
@@ -271,15 +268,14 @@ class CaseExpression(Expression):
         """Complete the CASE expression."""
         when_exprs = []
         for condition, result in self.when_clauses:
-            when_expr = ast.CaseWhen(
-                expr=condition.node,
-                result=_value_to_node(result)
-            )
+            when_expr = ast.CaseWhen(expr=condition.node, result=_value_to_node(result))
             when_exprs.append(when_expr)
 
         case_node = ast.CaseExpr(
             args=when_exprs,
-            defresult=_value_to_node(self.else_clause) if self.else_clause is not None else None
+            defresult=_value_to_node(self.else_clause)
+            if self.else_clause is not None
+            else None,
         )
         return Expression(case_node)
 
@@ -331,10 +327,7 @@ def and_(*expressions: Expression) -> Expression:
     # Build a tree of AND expressions
     result = expressions[0]
     for expr in expressions[1:]:
-        node = ast.BoolExpr(
-            boolop=BoolExprType.AND_EXPR,
-            args=[result.node, expr.node]
-        )
+        node = ast.BoolExpr(boolop=BoolExprType.AND_EXPR, args=[result.node, expr.node])
         result = Expression(node)
 
     return result
@@ -350,10 +343,7 @@ def or_(*expressions: Expression) -> Expression:
     # Build a tree of OR expressions
     result = expressions[0]
     for expr in expressions[1:]:
-        node = ast.BoolExpr(
-            boolop=BoolExprType.OR_EXPR,
-            args=[result.node, expr.node]
-        )
+        node = ast.BoolExpr(boolop=BoolExprType.OR_EXPR, args=[result.node, expr.node])
         result = Expression(node)
 
     return result
@@ -361,10 +351,7 @@ def or_(*expressions: Expression) -> Expression:
 
 def not_(expression: Expression) -> Expression:
     """Negate an expression with NOT."""
-    node = ast.BoolExpr(
-        boolop=BoolExprType.NOT_EXPR,
-        args=[expression.node]
-    )
+    node = ast.BoolExpr(boolop=BoolExprType.NOT_EXPR, args=[expression.node])
     return Expression(node)
 
 
@@ -372,7 +359,9 @@ class FunctionRegistry:
     """Registry of PostgreSQL functions with type-safe builders."""
 
     @staticmethod
-    def count(expr: Optional[Union[Expression, str]] = None, distinct: bool = False) -> FunctionExpression:
+    def count(
+        expr: Optional[Union[Expression, str]] = None, distinct: bool = False
+    ) -> FunctionExpression:
         """COUNT aggregate function."""
         if expr is None or expr == "*":
             # COUNT(*)
@@ -473,7 +462,9 @@ class FunctionRegistry:
         return FunctionExpression("concat", args)
 
     @staticmethod
-    def json_extract_path_text(json_expr: Union[Expression, str], *path_elements: str) -> FunctionExpression:
+    def json_extract_path_text(
+        json_expr: Union[Expression, str], *path_elements: str
+    ) -> FunctionExpression:
         """JSON_EXTRACT_PATH_TEXT function."""
         args = [col(json_expr) if isinstance(json_expr, str) else json_expr]
         for path in path_elements:
@@ -481,7 +472,9 @@ class FunctionRegistry:
         return FunctionExpression("json_extract_path_text", args)
 
     @staticmethod
-    def jsonb_extract_path_text(json_expr: Union[Expression, str], *path_elements: str) -> FunctionExpression:
+    def jsonb_extract_path_text(
+        json_expr: Union[Expression, str], *path_elements: str
+    ) -> FunctionExpression:
         """JSONB_EXTRACT_PATH_TEXT function."""
         args = [col(json_expr) if isinstance(json_expr, str) else json_expr]
         for path in path_elements:
@@ -494,9 +487,14 @@ class FunctionRegistry:
         return FunctionExpression("row_number", [])
 
     @staticmethod
-    def array_length(array_expr: Union[Expression, str], dimension: int = 1) -> FunctionExpression:
+    def array_length(
+        array_expr: Union[Expression, str], dimension: int = 1
+    ) -> FunctionExpression:
         """ARRAY_LENGTH function."""
-        args = [col(array_expr) if isinstance(array_expr, str) else array_expr, literal(dimension)]
+        args = [
+            col(array_expr) if isinstance(array_expr, str) else array_expr,
+            literal(dimension),
+        ]
         return FunctionExpression("array_length", args)
 
     @staticmethod
@@ -511,13 +509,15 @@ func = FunctionRegistry()
 
 def _create_comparison(left: Expression, operator: str, right: Any) -> Expression:
     """Create a comparison expression."""
-    right_node = _value_to_node(right) if not isinstance(right, Expression) else right.node
+    right_node = (
+        _value_to_node(right) if not isinstance(right, Expression) else right.node
+    )
 
     node = ast.A_Expr(
         kind=A_Expr_Kind.AEXPR_OP,
         name=[ast.String(sval=operator)],
         lexpr=left.node,
-        rexpr=right_node
+        rexpr=right_node,
     )
     return Expression(node)
 
@@ -552,7 +552,7 @@ def _build_order_by(columns: List[str]) -> List[ast.SortBy]:
         sort_items.append(
             ast.SortBy(
                 node=ast.ColumnRef(fields=[ast.String(sval=col_name)]),
-                sortby_dir=ast.SortByDir.SORTBY_DEFAULT
+                sortby_dir=ast.SortByDir.SORTBY_DEFAULT,
             )
         )
     return sort_items
