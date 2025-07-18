@@ -8,6 +8,7 @@ using the PostgreSQL AST via pglast.
 from typing import Any, List, Optional, Union, TYPE_CHECKING
 
 from pglast import ast
+from pglast.ast import ResTarget
 from pglast.enums import BoolExprType, A_Expr_Kind, NullTestType, SubLinkType
 
 from pghatch.query_builder.types import ColumnReference
@@ -53,16 +54,18 @@ class ColumnExpression(Expression):
     """Expression representing a column reference."""
 
     def __init__(self, name: str | Parameter, table_alias: Optional[str] = None):
-        self.column_ref = ColumnReference(name, table_alias)
-
         # Build the AST node
         fields = []
         if table_alias:
             fields.append(ast.String(sval=table_alias))
+
         if isinstance(name, Parameter):
-            fields.append(ast.String(sval=name.value))
+            fields.append(ast.String(sval=name.name))
         elif isinstance(name, str):
-            if "." in name:
+            if name == "*":
+                # Handle SELECT *
+                fields.append(ast.A_Star())
+            elif "." in name:
                 # Handle qualified names like "schema.table.column"
                 parts = name.split(".")
                 if len(parts) == 3:
@@ -119,9 +122,9 @@ class ColumnExpression(Expression):
 
         if isinstance(values, Query):
             node = ast.SubLink(
-            subLinkType=SubLinkType.ANY_SUBLINK,
-            subselect=values.query_ast(),
-            testexpr=self.node,
+                subLinkType=SubLinkType.ANY_SUBLINK,
+                subselect=values.query_ast(),
+                testexpr=self.node,
             )
         elif isinstance(values, Parameter):
             # If it's a parameter, we treat it as a single value
@@ -243,7 +246,7 @@ class ResTargetExpression:
     def __init__(self, node: ast.Node, alias: Optional[str] = None):
         self.node = ast.ResTarget(
             val=node,
-            name=alias
+            name=alias,
         )
 
 
@@ -536,7 +539,7 @@ def _value_to_node(value: Any, query_builder: Optional["Query"] = None) -> ast.N
     elif isinstance(value, Parameter):
         # For now, just use the literal value since parameter handling
         # needs more sophisticated implementation
-        return _value_to_node(value.value)
+        return _value_to_node(value.name)
     else:
         # For other types, convert to string
         return ast.A_Const(val=ast.String(sval=str(value)))

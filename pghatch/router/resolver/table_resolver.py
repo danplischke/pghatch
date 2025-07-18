@@ -81,7 +81,6 @@ class TableViewResolver(Resolver):
     async def resolve(self, limit: typing.Union[TableViewLimit, None] = None):
         from pglast.ast import SelectStmt, A_Const, Integer, RangeVar
         from pglast.stream import RawStream
-        import asyncpg
 
         select_stmt = SelectStmt(
             targetList=[ResTarget(name=attr) for attr in self.fields],
@@ -109,19 +108,3 @@ class TableViewResolver(Resolver):
         async with self.router._pool.acquire() as conn:
             values = await conn.fetch(sql)
         return [self.return_type(**dict(row)) for row in values]
-
-
-if __name__ == "__main__":
-    async def task():
-        while True:
-            await asyncio.sleep(1)
-            print("Running...")
-
-
-    async def main():
-        asyncio.create_task(task())
-
-        await asyncio.sleep(20)
-
-
-    asyncio.run(main())

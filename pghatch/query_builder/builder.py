@@ -46,6 +46,50 @@ def select_all() -> "Query":
     return query.select_all()
 
 
+def insert(table: str, schema: Optional[str] = None) -> "InsertQuery":
+    """
+    Create a new InsertQuery instance.
+
+    Args:
+        table: Table name to insert into
+        schema: Optional schema name
+
+    Returns:
+        InsertQuery: New InsertQuery instance
+    """
+    return InsertQuery(table, schema)
+
+
+def update(table: str, schema: Optional[str] = None, alias: Optional[str] = None) -> "UpdateQuery":
+    """
+    Create a new UpdateQuery instance.
+
+    Args:
+        table: Table name to update
+        schema: Optional schema name
+        alias: Optional table alias
+
+    Returns:
+        UpdateQuery: New UpdateQuery instance
+    """
+    return UpdateQuery(table, schema, alias)
+
+
+def delete(table: str, schema: Optional[str] = None, alias: Optional[str] = None) -> "DeleteQuery":
+    """
+    Create a new DeleteQuery instance.
+
+    Args:
+        table: Table name to delete from
+        schema: Optional schema name
+        alias: Optional table alias
+
+    Returns:
+        DeleteQuery: New DeleteQuery instance
+    """
+    return DeleteQuery(table, schema, alias)
+
+
 class Query:
     """
     Main query builder class for constructing PostgreSQL queries.
@@ -87,33 +131,7 @@ class Query:
         """
         for column in columns:
             if isinstance(column, str):
-                if column == "*":
-                    # Handle SELECT *
-                    self._select_list.append(ResTargetExpression(
-                        ast.ColumnRef(fields=[ast.A_Star()])))
-
-                elif "." in column:
-                    # Handle qualified names like "schema.table.column"
-                    parts = column.split(".")
-                    if len(parts) == 3:
-                        schema, table, col_name = parts
-                        self._select_list.append(
-                            ResTargetExpression(
-                                ast.ColumnRef(
-                                    fields=[ast.String(sval=schema), ast.String(sval=table), ast.String(sval=col_name)])
-                            )
-                        )
-                    elif len(parts) == 2:
-                        table, col_name = parts
-                        self._select_list.append(
-                            ResTargetExpression(
-                                ast.ColumnRef(fields=[ast.String(sval=table), ast.String(sval=col_name)])
-                            )
-                        )
-                    else:
-                        raise ValueError("Invalid column format. Expected 'schema.table.column' or 'table.column'.")
-                else:
-                    self._select_list.append(ResTargetExpression(ast.ColumnRef(fields=[ast.String(sval=column)])))
+                self._select_list.append(ResTargetExpression(ColumnExpression(column).node))
 
             elif isinstance(column, Parameter):
                 # Parameter object
@@ -653,3 +671,675 @@ class Query:
         """Return a detailed string representation."""
         sql, params = self.build()
         return f"QueryBuilder(sql='{sql}', params={params})"
+
+
+class InsertQuery:
+    """
+    Query builder for INSERT statements.
+    
+    Provides a fluent interface for building PostgreSQL INSERT queries
+    using the PostgreSQL AST via pglast.
+    """
+    
+    def __init__(self, table: str, schema: Optional[str] = None):
+        self.table = TableReference(table, schema)
+        self._columns: List[str] = []
+        self._values: List[List[Any]] = []
+        self._returning: List[Union[str, Expression]] = []
+        self._on_conflict: Optional[Dict[str, Any]] = None
+        self._parameters: List[Any] = []
+        self._parameter_counter = 0
+    
+    def columns(self, *cols: str) -> "InsertQuery":
+        """
+        Specify the columns for the INSERT.
+        
+        Args:
+            *cols: Column names
+            
+        Returns:
+            InsertQuery: Self for method chaining
+        """
+        self._columns.extend(cols)
+        return self
+    
+    def values(self, *vals: Any) -> "InsertQuery":
+        """
+        Add a row of values for the INSERT.
+        
+        Args:
+            *vals: Values for each column
+            
+        Returns:
+            InsertQuery: Self for method chaining
+        """
+        if len(vals) != len(self._columns):
+            raise ValueError(f"Number of values ({len(vals)}) must match number of columns ({len(self._columns)})")
+        
+        # Store values directly - parameter conversion happens in build()
+        self._values.append(list(vals))
+        return self
+    
+    def values_dict(self, **kwargs: Any) -> "InsertQuery":
+        """
+        Add values using a dictionary mapping column names to values.
+        
+        Args:
+            **kwargs: Column name to value mappings
+            
+        Returns:
+            InsertQuery: Self for method chaining
+        """
+        if not self._columns:
+            self._columns = list(kwargs.keys())
+        
+        # Ensure all columns are present
+        vals = []
+        for col in self._columns:
+            if col not in kwargs:
+                raise ValueError(f"Missing value for column '{col}'")
+            vals.append(kwargs[col])
+        
+        return self.values(*vals)
+    
+    def returning(self, *cols: Union[str, Expression]) -> "InsertQuery":
+        """
+        Add RETURNING clause.
+        
+        Args:
+            *cols: Columns or expressions to return
+            
+        Returns:
+            InsertQuery: Self for method chaining
+        """
+        self._returning.extend(cols)
+        return self
+    
+    def on_conflict_do_nothing(self, *conflict_columns: str) -> "InsertQuery":
+        """
+        Add ON CONFLICT DO NOTHING clause.
+        
+        Args:
+            *conflict_columns: Columns that might conflict
+            
+        Returns:
+            InsertQuery: Self for method chaining
+        """
+        self._on_conflict = {
+            'action': 'nothing',
+            'columns': list(conflict_columns)
+        }
+        return self
+    
+    def on_conflict_do_update(self, conflict_columns: List[str], **update_values: Any) -> "InsertQuery":
+        """
+        Add ON CONFLICT DO UPDATE clause.
+        
+        Args:
+            conflict_columns: Columns that might conflict
+            **update_values: Column updates for conflicts
+            
+        Returns:
+            InsertQuery: Self for method chaining
+        """
+        self._on_conflict = {
+            'action': 'update',
+            'columns': conflict_columns,
+            'updates': update_values
+        }
+        return self
+    
+    def _add_parameter(self, value: Any) -> str:
+        """Add a parameter and return its placeholder."""
+        self._parameter_counter += 1
+        self._parameters.append(value)
+        return f"${self._parameter_counter}"
+    
+    def build(self) -> Tuple[str, List[Any]]:
+        """
+        Build the INSERT query.
+        
+        Returns:
+            Tuple[str, List[Any]]: SQL string and parameter list
+        """
+        # Reset parameters for this build
+        self._parameters = []
+        self._parameter_counter = 0
+        
+        # Build the AST
+        insert_stmt = self._build_insert_stmt()
+        
+        # Generate SQL
+        sql = RawStream()(insert_stmt)
+        
+        return sql, self._parameters
+    
+    def _build_insert_stmt(self) -> ast.InsertStmt:
+        """Build the INSERT statement AST."""
+        # Build target relation
+        relation = ast.RangeVar(
+            relname=self.table.name,
+            schemaname=self.table.schema,
+            inh=True
+        )
+        
+        # Build columns
+        cols = None
+        if self._columns:
+            cols = [ast.ResTarget(name=col) for col in self._columns]
+        
+        # Build values
+        values_lists = []
+        for value_row in self._values:
+            value_nodes = []
+            for val in value_row:
+                self._parameter_counter += 1
+                self._parameters.append(val)
+                value_nodes.append(ast.ParamRef(number=self._parameter_counter))
+            values_lists.append(value_nodes)
+        
+        # Create VALUES clause
+        select_stmt = ast.SelectStmt(
+            valuesLists=values_lists
+        )
+        
+        # Build RETURNING clause
+        returning_list = None
+        if self._returning:
+            returning_list = []
+            for ret in self._returning:
+                if isinstance(ret, str):
+                    returning_list.append(ast.ResTarget(
+                        val=ast.ColumnRef(fields=[ast.String(sval=ret)])
+                    ))
+                elif isinstance(ret, Expression):
+                    returning_list.append(ast.ResTarget(val=ret.node))
+        
+        return ast.InsertStmt(
+            relation=relation,
+            cols=cols,
+            selectStmt=select_stmt,
+            returningList=returning_list
+        )
+    
+    async def execute(
+        self,
+        pool: asyncpg.Pool,
+        connection: Optional[asyncpg.Connection] = None,
+        model_class: Optional[type] = None
+    ) -> QueryResult:
+        """
+        Execute the INSERT query.
+        
+        Args:
+            pool: AsyncPG connection pool
+            connection: Optional existing connection to use
+            model_class: Optional Pydantic model class for result conversion
+            
+        Returns:
+            QueryResult: Query results with metadata
+        """
+        sql, parameters = self.build()
+        
+        if connection:
+            if self._returning:
+                rows = await connection.fetch(sql, *parameters)
+            else:
+                await connection.execute(sql, *parameters)
+                rows = []
+        else:
+            async with pool.acquire() as conn:
+                if self._returning:
+                    rows = await conn.fetch(sql, *parameters)
+                else:
+                    await conn.execute(sql, *parameters)
+                    rows = []
+        
+        # Convert asyncpg.Record objects to dictionaries
+        dict_rows = [dict(row) for row in rows]
+        
+        return QueryResult(
+            rows=dict_rows,
+            sql=sql,
+            parameters=parameters,
+            row_count=len(dict_rows),
+            model_class=model_class
+        )
+    
+    def __str__(self) -> str:
+        """Return the SQL string representation."""
+        sql, _ = self.build()
+        return sql
+    
+    def __repr__(self) -> str:
+        """Return a detailed string representation."""
+        sql, params = self.build()
+        return f"InsertQuery(sql='{sql}', params={params})"
+
+
+class UpdateQuery:
+    """
+    Query builder for UPDATE statements.
+    
+    Provides a fluent interface for building PostgreSQL UPDATE queries
+    using the PostgreSQL AST via pglast.
+    """
+    
+    def __init__(self, table: str, schema: Optional[str] = None, alias: Optional[str] = None):
+        self.table = TableReference(table, schema, alias)
+        self._set_clauses: List[Tuple[str, Any]] = []
+        self._joins: List[Tuple[str, TableReference, Optional[Expression]]] = []
+        self._where_clause: Optional[Expression] = None
+        self._returning: List[Union[str, Expression]] = []
+        self._parameters: List[Any] = []
+        self._parameter_counter = 0
+    
+    def set(self, column: str, value: Any) -> "UpdateQuery":
+        """
+        Add a SET clause.
+        
+        Args:
+            column: Column name to update
+            value: New value for the column
+            
+        Returns:
+            UpdateQuery: Self for method chaining
+        """
+        self._set_clauses.append((column, value))
+        return self
+    
+    def set_dict(self, **kwargs: Any) -> "UpdateQuery":
+        """
+        Add multiple SET clauses using a dictionary.
+        
+        Args:
+            **kwargs: Column name to value mappings
+            
+        Returns:
+            UpdateQuery: Self for method chaining
+        """
+        for column, value in kwargs.items():
+            self.set(column, value)
+        return self
+    
+    def join(
+        self,
+        table: str,
+        on: Optional[Expression] = None,
+        join_type: str = JoinType.INNER,
+        schema: Optional[str] = None,
+        alias: Optional[str] = None
+    ) -> "UpdateQuery":
+        """
+        Add a JOIN clause to the UPDATE.
+        
+        Args:
+            table: Table to join
+            on: Join condition expression
+            join_type: Type of join (INNER, LEFT, RIGHT, FULL)
+            schema: Optional schema name
+            alias: Optional table alias
+            
+        Returns:
+            UpdateQuery: Self for method chaining
+        """
+        table_ref = TableReference(table, schema, alias)
+        self._joins.append((join_type, table_ref, on))
+        return self
+    
+    def where(self, condition: Expression) -> "UpdateQuery":
+        """
+        Add a WHERE clause condition.
+        
+        Args:
+            condition: Boolean expression for filtering
+            
+        Returns:
+            UpdateQuery: Self for method chaining
+        """
+        if self._where_clause is None:
+            self._where_clause = condition
+        else:
+            # Combine with existing condition using AND
+            from .expressions import and_
+            self._where_clause = and_(self._where_clause, condition)
+        
+        return self
+    
+    def returning(self, *cols: Union[str, Expression]) -> "UpdateQuery":
+        """
+        Add RETURNING clause.
+        
+        Args:
+            *cols: Columns or expressions to return
+            
+        Returns:
+            UpdateQuery: Self for method chaining
+        """
+        self._returning.extend(cols)
+        return self
+    
+    def _add_parameter(self, value: Any) -> str:
+        """Add a parameter and return its placeholder."""
+        self._parameter_counter += 1
+        self._parameters.append(value)
+        return f"${self._parameter_counter}"
+    
+    def build(self) -> Tuple[str, List[Any]]:
+        """
+        Build the UPDATE query.
+        
+        Returns:
+            Tuple[str, List[Any]]: SQL string and parameter list
+        """
+        # Reset parameters for this build
+        self._parameters = []
+        self._parameter_counter = 0
+        
+        # Build the AST
+        update_stmt = self._build_update_stmt()
+        
+        # Generate SQL
+        sql = RawStream()(update_stmt)
+        
+        return sql, self._parameters
+    
+    def _build_update_stmt(self) -> ast.UpdateStmt:
+        """Build the UPDATE statement AST."""
+        # Build target relation
+        relation = ast.RangeVar(
+            relname=self.table.name,
+            schemaname=self.table.schema,
+            alias=ast.Alias(aliasname=self.table.alias) if self.table.alias else None,
+            inh=True
+        )
+        
+        # Build SET clauses
+        target_list = []
+        for column, value in self._set_clauses:
+            self._parameter_counter += 1
+            self._parameters.append(value)
+            
+            target_list.append(ast.ResTarget(
+                name=column,
+                val=ast.ParamRef(number=self._parameter_counter)
+            ))
+        
+        # Build FROM clause (for joins)
+        from_clause = None
+        if self._joins:
+            from_items = []
+            for join_type, table_ref, condition in self._joins:
+                range_var = ast.RangeVar(
+                    relname=table_ref.name,
+                    schemaname=table_ref.schema,
+                    alias=ast.Alias(aliasname=table_ref.alias) if table_ref.alias else None,
+                    inh=True
+                )
+                from_items.append(range_var)
+            from_clause = from_items
+        
+        # Build WHERE clause
+        where_clause = self._where_clause.node if self._where_clause else None
+        
+        # Build RETURNING clause
+        returning_list = None
+        if self._returning:
+            returning_list = []
+            for ret in self._returning:
+                if isinstance(ret, str):
+                    returning_list.append(ast.ResTarget(
+                        val=ast.ColumnRef(fields=[ast.String(sval=ret)])
+                    ))
+                elif isinstance(ret, Expression):
+                    returning_list.append(ast.ResTarget(val=ret.node))
+        
+        return ast.UpdateStmt(
+            relation=relation,
+            targetList=target_list,
+            fromClause=from_clause,
+            whereClause=where_clause,
+            returningList=returning_list
+        )
+    
+    async def execute(
+        self,
+        pool: asyncpg.Pool,
+        connection: Optional[asyncpg.Connection] = None,
+        model_class: Optional[type] = None
+    ) -> QueryResult:
+        """
+        Execute the UPDATE query.
+        
+        Args:
+            pool: AsyncPG connection pool
+            connection: Optional existing connection to use
+            model_class: Optional Pydantic model class for result conversion
+            
+        Returns:
+            QueryResult: Query results with metadata
+        """
+        sql, parameters = self.build()
+        
+        if connection:
+            if self._returning:
+                rows = await connection.fetch(sql, *parameters)
+            else:
+                result = await connection.execute(sql, *parameters)
+                rows = []
+        else:
+            async with pool.acquire() as conn:
+                if self._returning:
+                    rows = await conn.fetch(sql, *parameters)
+                else:
+                    result = await conn.execute(sql, *parameters)
+                    rows = []
+        
+        # Convert asyncpg.Record objects to dictionaries
+        dict_rows = [dict(row) for row in rows]
+        
+        return QueryResult(
+            rows=dict_rows,
+            sql=sql,
+            parameters=parameters,
+            row_count=len(dict_rows),
+            model_class=model_class
+        )
+    
+    def __str__(self) -> str:
+        """Return the SQL string representation."""
+        sql, _ = self.build()
+        return sql
+    
+    def __repr__(self) -> str:
+        """Return a detailed string representation."""
+        sql, params = self.build()
+        return f"UpdateQuery(sql='{sql}', params={params})"
+
+
+class DeleteQuery:
+    """
+    Query builder for DELETE statements.
+    
+    Provides a fluent interface for building PostgreSQL DELETE queries
+    using the PostgreSQL AST via pglast.
+    """
+    
+    def __init__(self, table: str, schema: Optional[str] = None, alias: Optional[str] = None):
+        self.table = TableReference(table, schema, alias)
+        self._using: List[TableReference] = []
+        self._where_clause: Optional[Expression] = None
+        self._returning: List[Union[str, Expression]] = []
+        self._parameters: List[Any] = []
+        self._parameter_counter = 0
+    
+    def using(self, table: str, schema: Optional[str] = None, alias: Optional[str] = None) -> "DeleteQuery":
+        """
+        Add a USING clause (PostgreSQL-specific).
+        
+        Args:
+            table: Table name for USING clause
+            schema: Optional schema name
+            alias: Optional table alias
+            
+        Returns:
+            DeleteQuery: Self for method chaining
+        """
+        table_ref = TableReference(table, schema, alias)
+        self._using.append(table_ref)
+        return self
+    
+    def where(self, condition: Expression) -> "DeleteQuery":
+        """
+        Add a WHERE clause condition.
+        
+        Args:
+            condition: Boolean expression for filtering
+            
+        Returns:
+            DeleteQuery: Self for method chaining
+        """
+        if self._where_clause is None:
+            self._where_clause = condition
+        else:
+            # Combine with existing condition using AND
+            from .expressions import and_
+            self._where_clause = and_(self._where_clause, condition)
+        
+        return self
+    
+    def returning(self, *cols: Union[str, Expression]) -> "DeleteQuery":
+        """
+        Add RETURNING clause.
+        
+        Args:
+            *cols: Columns or expressions to return
+            
+        Returns:
+            DeleteQuery: Self for method chaining
+        """
+        self._returning.extend(cols)
+        return self
+    
+    def _add_parameter(self, value: Any) -> str:
+        """Add a parameter and return its placeholder."""
+        self._parameter_counter += 1
+        self._parameters.append(value)
+        return f"${self._parameter_counter}"
+    
+    def build(self) -> Tuple[str, List[Any]]:
+        """
+        Build the DELETE query.
+        
+        Returns:
+            Tuple[str, List[Any]]: SQL string and parameter list
+        """
+        # Reset parameters for this build
+        self._parameters = []
+        self._parameter_counter = 0
+        
+        # Build the AST
+        delete_stmt = self._build_delete_stmt()
+        
+        # Generate SQL
+        sql = RawStream()(delete_stmt)
+        
+        return sql, self._parameters
+    
+    def _build_delete_stmt(self) -> ast.DeleteStmt:
+        """Build the DELETE statement AST."""
+        # Build target relation
+        relation = ast.RangeVar(
+            relname=self.table.name,
+            schemaname=self.table.schema,
+            alias=ast.Alias(aliasname=self.table.alias) if self.table.alias else None,
+            inh=True
+        )
+        
+        # Build USING clause
+        using_clause = None
+        if self._using:
+            using_clause = []
+            for table_ref in self._using:
+                using_clause.append(ast.RangeVar(
+                    relname=table_ref.name,
+                    schemaname=table_ref.schema,
+                    alias=ast.Alias(aliasname=table_ref.alias) if table_ref.alias else None,
+                    inh=True
+                ))
+        
+        # Build WHERE clause
+        where_clause = self._where_clause.node if self._where_clause else None
+        
+        # Build RETURNING clause
+        returning_list = None
+        if self._returning:
+            returning_list = []
+            for ret in self._returning:
+                if isinstance(ret, str):
+                    returning_list.append(ast.ResTarget(
+                        val=ast.ColumnRef(fields=[ast.String(sval=ret)])
+                    ))
+                elif isinstance(ret, Expression):
+                    returning_list.append(ast.ResTarget(val=ret.node))
+        
+        return ast.DeleteStmt(
+            relation=relation,
+            usingClause=using_clause,
+            whereClause=where_clause,
+            returningList=returning_list
+        )
+    
+    async def execute(
+        self,
+        pool: asyncpg.Pool,
+        connection: Optional[asyncpg.Connection] = None,
+        model_class: Optional[type] = None
+    ) -> QueryResult:
+        """
+        Execute the DELETE query.
+        
+        Args:
+            pool: AsyncPG connection pool
+            connection: Optional existing connection to use
+            model_class: Optional Pydantic model class for result conversion
+            
+        Returns:
+            QueryResult: Query results with metadata
+        """
+        sql, parameters = self.build()
+        
+        if connection:
+            if self._returning:
+                rows = await connection.fetch(sql, *parameters)
+            else:
+                result = await connection.execute(sql, *parameters)
+                rows = []
+        else:
+            async with pool.acquire() as conn:
+                if self._returning:
+                    rows = await conn.fetch(sql, *parameters)
+                else:
+                    result = await conn.execute(sql, *parameters)
+                    rows = []
+        
+        # Convert asyncpg.Record objects to dictionaries
+        dict_rows = [dict(row) for row in rows]
+        
+        return QueryResult(
+            rows=dict_rows,
+            sql=sql,
+            parameters=parameters,
+            row_count=len(dict_rows),
+            model_class=model_class
+        )
+    
+    def __str__(self) -> str:
+        """Return the SQL string representation."""
+        sql, _ = self.build()
+        return sql
+    
+    def __repr__(self) -> str:
+        """Return a detailed string representation."""
+        sql, params = self.build()
+        return f"DeleteQuery(sql='{sql}', params={params})"
