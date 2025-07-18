@@ -7,9 +7,9 @@ using the PostgreSQL AST via pglast.
 
 from typing import Any, List, Optional, Union
 from pglast import ast
-from pglast.enums import BoolExprType, A_Expr_Kind, NullTestType, SubLinkType
+from pglast.enums import BoolExprType, A_Expr_Kind, NullTestType
 
-from .types import ColumnReference, AggregateFunction
+from .types import ColumnReference
 
 
 class Parameter:

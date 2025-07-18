@@ -147,7 +147,6 @@ class SchemaRouter(APIRouter):
                     self._app.routes.remove(app_route)
             self.routes.remove(route)
 
-
         async with self._pool.acquire() as conn:
             introspection = await make_introspection_query(conn)
             for cls in introspection.classes:

@@ -6,21 +6,20 @@ parameterized PostgreSQL queries.
 """
 
 from typing import Any, Dict, List, Optional, Union, Tuple
-from pglast import ast
-from pglast.stream import RawStream
-from pglast.enums import JoinType as PgJoinType, SortByDir, LimitOption
+
 import asyncpg
+from pglast import ast
+from pglast.enums import JoinType as PgJoinType, SortByDir, LimitOption
+from pglast.stream import RawStream
 
 from pghatch.introspection.introspection import Introspection
-from .types import (
-    QueryResult, ExecutionContext, TableReference, ColumnReference,
-    JoinType, OrderDirection
-)
 from .expressions import (
-    Expression, ColumnExpression, FunctionExpression, ResTargetExpression,
-    col, func, literal
+    Expression, FunctionExpression, ResTargetExpression
 )
 from .functions import PostgreSQLFunctions
+from .types import (
+    QueryResult, TableReference, JoinType, OrderDirection
+)
 
 
 class QueryBuilder:

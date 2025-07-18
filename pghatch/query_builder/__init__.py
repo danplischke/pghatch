@@ -1,13 +1,6 @@
-"""
-PostgreSQL Query Builder using pglast AST.
-
-This module provides a fluent interface for building type-safe PostgreSQL queries
-using the native PostgreSQL AST via pglast.
-"""
-
-from .builder import QueryBuilder
-from .expressions import col, func, literal, param, and_, or_, not_
-from .types import QueryResult, ExecutionContext
+from pghatch.query_builder.builder import QueryBuilder
+from pghatch.query_builder.expressions import col, func, literal, param, and_, or_, not_
+from pghatch.query_builder.types import QueryResult, ExecutionContext
 
 __all__ = [
     "QueryBuilder",

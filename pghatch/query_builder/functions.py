@@ -1,10 +1,3 @@
-"""
-PostgreSQL function registry and builders.
-
-This module provides comprehensive support for PostgreSQL built-in functions
-and user-defined functions discovered through introspection.
-"""
-
 from typing import Any, Dict, List, Optional, Union
 from pglast import ast
 

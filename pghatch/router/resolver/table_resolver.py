@@ -81,33 +81,24 @@ class TableViewResolver(Resolver):
     async def resolve(self, limit: typing.Union[TableViewLimit, None] = None):
         from pglast.ast import SelectStmt, A_Const, Integer, RangeVar
         from pglast.stream import RawStream
-        import asyncpg
+        from pghatch.query_builder import QueryBuilder, col
 
-        select_stmt = SelectStmt(
-            targetList=[ResTarget(name=attr) for attr in self.fields],
-            fromClause=[
-                RangeVar(
-                    relname=self.name,
-                    schemaname=self.schema,
-                    inh=True,
-                    relpersistence=self.type,
-                )
-            ],
-            limitCount=A_Const(val=Integer(ival=limit.limit))
-            if limit is not None and limit.limit is not None
-            else None,
-            limitOffset=A_Const(
-                val=Integer(ival=limit.offset))  # TODO: change to server-side binding / remote cursor pagination
-            if limit is not None and limit.offset is not None
-            else None,
-            limitOption=LimitOption.LIMIT_OPTION_COUNT
-            if limit is not None and limit.limit is not None
-            else None,
-        )
+        builder = QueryBuilder()
+        query = builder.select(
+            *[col(attr) for attr in self.fields]
+        ).from_(table=self.name, schema=self.schema)
 
-        sql = RawStream()(select_stmt)
+        if limit is not None:
+            if limit.limit is not None:
+                query = query.limit(limit.limit.limit)
+            if limit.offset is not None:
+                query = query.offset(limit.offset.real)
+
+        sql, params = query.build()
+
         async with self.router._pool.acquire() as conn:
-            values = await conn.fetch(sql)
+            values = await conn.fetch(sql, *params)
+
         return [self.return_type(**dict(row)) for row in values]
 
 
