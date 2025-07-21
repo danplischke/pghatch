@@ -1,10 +1,11 @@
-from typing import List, Union, Literal
+from typing import List, Union, Annotated, Literal
 
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, create_model, Field
 from pydantic.alias_generators import to_pascal
 
 from pghatch.introspection.introspection import Introspection
 from pghatch.introspection.tables import PgAttribute
+from pghatch.utils.model_registry import create_model
 
 
 def create_range_condition_model(
@@ -53,7 +54,7 @@ def create_equal_condition_model(
         f"{table_name}{to_pascal(field)}EqualCondition",
         condition_type=Literal["EqualCondition"],
         field=Literal[field],
-        value=(py_type, ...),
+        value=py_type | None,
     )
 
 
@@ -64,7 +65,7 @@ def create_not_equal_condition_model(
         f"{table_name}{to_pascal(field)}NotEqualCondition",
         condition_type=Literal["NotEqualCondition"],
         field=Literal[field],
-        value=(py_type, ...),
+        value=py_type | None,
     )
 
 
@@ -154,19 +155,8 @@ def create_is_not_null_condition_model(
     )
 
 
-def get_null_condition_models(table_view_name: str, field_name: str, is_nullable: bool) -> List[type[BaseModel]]:
-    null_models = list()
-    if is_nullable:
-        null_models = [
-            create_is_null_condition_model(table_view_name, field_name),
-            create_is_not_null_condition_model(table_view_name, field_name),
-        ]
-    return null_models
-
 def get_numeric_condition_models(table_view_name: str, py_type: type, field_name: str, is_nullable: bool) -> List[
     type[BaseModel]]:
-    null_models = get_null_condition_models(table_view_name, field_name, is_nullable)
-
     return [
         create_equal_condition_model(table_view_name, field_name, py_type),
         create_not_equal_condition_model(table_view_name, field_name, py_type),
@@ -175,40 +165,30 @@ def get_numeric_condition_models(table_view_name: str, py_type: type, field_name
         create_like_condition_model(table_view_name, field_name, py_type),
         create_ilike_condition_model(table_view_name, field_name, py_type),
         create_in_condition_model(table_view_name, field_name, py_type),
-        create_not_in_condition_model(table_view_name, field_name, py_type),
-        *null_models,
+        create_not_in_condition_model(table_view_name, field_name, py_type)
     ]
 
 
 def get_array_condition_models(table_view_name: str, py_type: type, field_name: str, is_nullable: bool) -> List[
     type[BaseModel]]:
-
-    null_models = get_null_condition_models(table_view_name, field_name, is_nullable)
-
     return [
         create_equal_condition_model(table_view_name, field_name, py_type),
         create_not_equal_condition_model(table_view_name, field_name, py_type),
         create_in_condition_model(table_view_name, field_name, py_type),
         create_not_in_condition_model(table_view_name, field_name, py_type),
-        *null_models,
     ]
 
 
 def get_boolean_condition_models(table_view_name: str, py_type: type, field_name: str, is_nullable: bool) -> List[
     type[BaseModel]]:
-    null_models = get_null_condition_models(table_view_name, field_name, is_nullable)
-
     return [
         create_equal_condition_model(table_view_name, field_name, py_type),
         create_not_equal_condition_model(table_view_name, field_name, py_type),
-        *null_models
     ]
 
 
 def get_datetime_condition_models(table_view_name: str, py_type: type, field_name: str, is_nullable: bool) -> List[
     type[BaseModel]]:
-    null_models = get_null_condition_models(table_view_name, field_name, is_nullable)
-
     return [
         create_equal_condition_model(table_view_name, field_name, py_type),
         create_not_equal_condition_model(table_view_name, field_name, py_type),
@@ -218,79 +198,60 @@ def get_datetime_condition_models(table_view_name: str, py_type: type, field_nam
         create_ilike_condition_model(table_view_name, field_name, py_type),
         create_in_condition_model(table_view_name, field_name, py_type),
         create_not_in_condition_model(table_view_name, field_name, py_type),
-        *null_models
     ]
 
 
 def get_enum_condition_models(table_view_name: str, py_type: type, field_name: str, is_nullable: bool) -> List[
     type[BaseModel]]:
-    null_models = get_null_condition_models(table_view_name, field_name, is_nullable)
-
     return [
         create_equal_condition_model(table_view_name, field_name, py_type),
         create_not_equal_condition_model(table_view_name, field_name, py_type),
         create_in_condition_model(table_view_name, field_name, py_type),
         create_not_in_condition_model(table_view_name, field_name, py_type),
-        *null_models
     ]
 
 
 def get_geometrics_condition_models(table_view_name: str, py_type: type, field_name: str, is_nullable: bool) -> List[
     type[BaseModel]]:
-    null_models = get_null_condition_models(table_view_name, field_name, is_nullable)
-
     return [
         create_equal_condition_model(table_view_name, field_name, py_type),
         create_not_equal_condition_model(table_view_name, field_name, py_type),
         create_in_condition_model(table_view_name, field_name, py_type),
         create_not_in_condition_model(table_view_name, field_name, py_type),
-        *null_models
     ]
 
 
 def get_network_condition_models(table_view_name: str, py_type: type, field_name: str, is_nullable: bool) -> List[
     type[BaseModel]]:
-    null_models = get_null_condition_models(table_view_name, field_name, is_nullable)
-
     return [
         create_equal_condition_model(table_view_name, field_name, py_type),
         create_not_equal_condition_model(table_view_name, field_name, py_type),
         create_in_condition_model(table_view_name, field_name, py_type),
         create_not_in_condition_model(table_view_name, field_name, py_type),
-        *null_models
     ]
 
 
 def get_pseudo_condition_models(table_view_name: str, py_type: type, field_name: str, is_nullable: bool) -> List[
     type[BaseModel]]:
-    null_models = get_null_condition_models(table_view_name, field_name, is_nullable)
-
     return [
         create_equal_condition_model(table_view_name, field_name, py_type),
         create_not_equal_condition_model(field_name, py_type),
         create_in_condition_model(table_view_name, field_name, py_type),
         create_not_in_condition_model(table_view_name, field_name, py_type),
-        *null_models
     ]
 
 
 def get_range_condition_models(table_view_name: str, py_type: type, field_name: str, is_nullable: bool) -> List[
     type[BaseModel]]:
-    null_models = get_null_condition_models(table_view_name, field_name, is_nullable)
-
-
     return [
         create_range_condition_model(table_view_name, field_name, py_type),
         create_not_range_condition_model(table_view_name, field_name, py_type),
         create_exists_condition_model(table_view_name, field_name, py_type),
-        *null_models
     ]
 
 
 def get_string_condition_models(table_view_name: str, py_type: type, field_name: str, is_nullable: bool) -> List[
     type[BaseModel]]:
-    null_models = get_null_condition_models(table_view_name, field_name, is_nullable)
-
     return [
         create_equal_condition_model(table_view_name, field_name, py_type),
         create_not_equal_condition_model(table_view_name, field_name, py_type),
@@ -298,14 +259,11 @@ def get_string_condition_models(table_view_name: str, py_type: type, field_name:
         create_ilike_condition_model(table_view_name, field_name, py_type),
         create_in_condition_model(table_view_name, field_name, py_type),
         create_not_in_condition_model(table_view_name, field_name, py_type),
-        *null_models
     ]
 
 
 def get_timespan_condition_models(table_view_name: str, py_type: type, field_name: str, is_nullable: bool) -> List[
     type[BaseModel]]:
-    null_models = get_null_condition_models(table_view_name, field_name, is_nullable)
-
     return [
         create_equal_condition_model(table_view_name, field_name, py_type),
         create_not_equal_condition_model(table_view_name, field_name, py_type),
@@ -315,20 +273,16 @@ def get_timespan_condition_models(table_view_name: str, py_type: type, field_nam
         create_ilike_condition_model(table_view_name, field_name, py_type),
         create_in_condition_model(table_view_name, field_name, py_type),
         create_not_in_condition_model(table_view_name, field_name, py_type),
-        *null_models
     ]
 
 
 def get_bitstring_condition_models(table_view_name: str, py_type: type, field_name: str, is_nullable: bool) -> List[
     type[BaseModel]]:
-    null_models = get_null_condition_models(table_view_name, field_name, is_nullable)
-
     return [
         create_equal_condition_model(table_view_name, field_name, py_type),
         create_not_equal_condition_model(table_view_name, field_name, py_type),
         create_in_condition_model(table_view_name, field_name, py_type),
         create_not_in_condition_model(table_view_name, field_name, py_type),
-        *null_models
     ]
 
 
@@ -380,14 +334,14 @@ def get_conditions_for_attribute(table_view_name: str, attr: PgAttribute, intros
     typ = attr.get_py_type_not_nullable(introspection)
     field_name = attr.attname
     is_nullable = attr.is_nullable()
-
+    print(attr.attname)
     match attr.get_type(introspection).typcategory:
         case "A":
             return get_array_condition_models(table_view_name, typ, field_name, is_nullable)
         case "B":
             return get_boolean_condition_models(table_view_name, typ, field_name, is_nullable)
         case "C":
-            raise NotImplementedError()
+            return []
         case "D":
             return get_datetime_condition_models(table_view_name, typ, field_name, is_nullable)
         case "E":
@@ -413,6 +367,17 @@ def get_conditions_for_attribute(table_view_name: str, attr: PgAttribute, intros
         case "X":
             raise NotImplementedError()
     return list()
+
+
+def create_field_condition_models(
+        table_view_name: str,
+        attr: PgAttribute,
+        introspection: Introspection
+):
+    discriminator = Field(discriminator='operator')
+    conditions = get_conditions_for_attribute(table_view_name, attr, introspection)
+
+    return Annotated[Union[*conditions], discriminator]
 
 
 def create_table_view_condition_model(table_view_oid: str, introspection: Introspection) -> type[BaseModel] | None:

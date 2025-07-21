@@ -10,7 +10,7 @@ from pydantic import Field, create_model, BaseModel
 from pydantic.alias_generators import to_camel
 
 from pghatch.introspection.introspection import Introspection, make_introspection_query
-from pghatch.router.resolver.condition_models import create_table_view_condition_model
+from pghatch.router.resolver.condition_modelsv2 import create_table_view_condition_model
 from pghatch.router.resolver.resolver import Resolver
 
 
