@@ -2,10 +2,9 @@
 Simplified tests for the query builder module.
 """
 
-import pytest
-from unittest.mock import Mock, AsyncMock
-from pghatch.query_builder import Query, col, func, literal, and_, or_, not_
-from pghatch.query_builder.types import QueryResult
+from unittest.mock import Mock
+from pghatch.query import Query, col, func, literal, and_, or_, not_
+from pghatch.query.builder.types import QueryResult
 from pghatch.introspection.introspection import Introspection
 
 

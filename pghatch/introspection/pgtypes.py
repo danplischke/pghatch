@@ -155,6 +155,8 @@ def _get_composite_type(
 
     relation = introspection.get_class(typ.typrelid)
     if relation is None:
+        if typ.typname == "tsvector":
+            return str
         raise ValueError(
             f"Relation for type {typ.typname} not found in introspection data."
         )
@@ -497,8 +499,7 @@ def _get_py_type_by_category(
             return _get_bitstring_py_type(introspection, typ, attr)
         case "X":
             return _get_unknown_py_type(introspection, typ, attr)
-
-    raise TypeError(f"Unsupported type: {typ.typname}")
+    raise str
 
 
 def get_py_type(

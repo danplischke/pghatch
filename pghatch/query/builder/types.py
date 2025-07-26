@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Union, TypeVar, Generic, TYPE_CHEC
 from asyncpg import Connection, Pool
 
 if TYPE_CHECKING:
-    from pghatch.query_builder.expressions import Parameter
+    from pghatch.query.builder.expressions import Parameter
 
 
 T = TypeVar("T")

@@ -14,7 +14,7 @@ A comprehensive, type-safe PostgreSQL query builder using the native PostgreSQL 
 ## Quick Start
 
 ```python
-from pghatch.query_builder import Query, col, func, and_, or_
+from pghatch.query import Query, col, func, and_, or_
 
 # Simple query
 qb = Query()
@@ -54,7 +54,7 @@ query = (qb
 Type-safe expression builders for WHERE clauses and more:
 
 ```python
-from pghatch.query_builder import col, literal, and_, or_, not_
+from pghatch.query import col, literal, and_, or_, not_
 
 # Column expressions
 col("age").gt(18)
@@ -77,7 +77,7 @@ and_(
 Comprehensive PostgreSQL function support:
 
 ```python
-from pghatch.query_builder import func
+from pghatch.query import func
 
 # Aggregate functions
 func.count("*")
@@ -176,7 +176,7 @@ query = (qb
 
 ```python
 import asyncpg
-from pghatch.query_builder import Query
+from pghatch.query import Query
 
 # Create connection pool
 pool = await asyncpg.create_pool("postgresql://user:pass@localhost/db")
@@ -290,7 +290,7 @@ See `examples/query_builder_examples.py` for comprehensive usage examples includ
 Run the test suite:
 
 ```bash
-pytest tests/unit/query_builder/
+pytest tests/unit/query/
 ```
 
 ## API Reference

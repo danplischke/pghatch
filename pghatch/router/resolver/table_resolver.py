@@ -109,12 +109,12 @@ class TableViewResolver(Resolver):
         sql = RawStream()(select_stmt)
         async with self.router._pool.acquire() as conn:
             values = await conn.fetch(sql)
+
         return [self.return_type(**dict(row)) for row in values]
 
 
 if __name__ == "__main__":
     import asyncpg
-
 
     async def main():
         pool = await asyncpg.create_pool(
@@ -129,6 +129,5 @@ if __name__ == "__main__":
             ).nspname == "public" and cls.relkind in ("r", "v", "m", "f", "p"):
                 condition_model = create_table_view_condition_model(cls.oid, introspection)
                 print(condition_model.schema_json(indent=4))
-
 
     asyncio.run(main())

@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Union, Tuple
 
 import asyncpg
 from pglast import ast
+from pglast.ast import RangeSubselect
 from pglast.enums import JoinType as PgJoinType, SortByDir, LimitOption
 from pglast.stream import RawStream
 
@@ -23,9 +24,9 @@ from .types import QueryResult, TableReference, JoinType, OrderDirection
 
 
 def select(
-    *columns: Union[
-        str, Expression, FunctionExpression, Parameter, ResTargetExpression
-    ],
+        *columns: Union[
+            str, Expression, FunctionExpression, Parameter, ResTargetExpression
+        ],
 ) -> "Query":
     """
     Create a new Query instance with a SELECT clause.
@@ -66,7 +67,7 @@ def insert(table: str, schema: Optional[str] = None) -> "InsertQuery":
 
 
 def update(
-    table: str, schema: Optional[str] = None, alias: Optional[str] = None
+        table: str, schema: Optional[str] = None, alias: Optional[str] = None
 ) -> "UpdateQuery":
     """
     Create a new UpdateQuery instance.
@@ -83,7 +84,7 @@ def update(
 
 
 def delete(
-    table: str, schema: Optional[str] = None, alias: Optional[str] = None
+        table: str, schema: Optional[str] = None, alias: Optional[str] = None
 ) -> "DeleteQuery":
     """
     Create a new DeleteQuery instance.
@@ -128,10 +129,10 @@ class Query:
         self._parameter_counter = 0
 
     def select(
-        self,
-        *columns: Union[
-            str, Expression, FunctionExpression, Parameter, ResTargetExpression
-        ],
+            self,
+            *columns: Union[
+                str, Expression, FunctionExpression, Parameter, ResTargetExpression
+            ],
     ) -> "Query":
         """
         Add columns to the SELECT clause.
@@ -218,8 +219,28 @@ class Query:
             self._distinct = tuple(distinct_cols)
         return self
 
+    def from_subquery(
+            self, subquery: "Query", alias: Optional[str] = None
+    ) -> "Query":
+        """
+        Set the FROM clause using a subquery.
+
+        Args:
+            subquery: Subquery to use as the FROM source
+            alias: Optional alias for the subquery
+
+        Returns:
+            Query: Self for method chaining
+        """
+
+        if isinstance(alias, str):
+            alias = ast.Alias(aliasname=alias)
+
+        self._from_clause = RangeSubselect(lateral=False, subquery=subquery.query_ast(), alias=alias)
+        return self
+
     def from_(
-        self, table: str, schema: Optional[str] = None, alias: Optional[str] = None
+            self, table: str, schema: Optional[str] = None, alias: Optional[str] = None
     ) -> "Query":
         """
         Set the FROM clause.
@@ -236,12 +257,12 @@ class Query:
         return self
 
     def join(
-        self,
-        table: str,
-        on: Optional[Expression] = None,
-        join_type: str = JoinType.INNER,
-        schema: Optional[str] = None,
-        alias: Optional[str] = None,
+            self,
+            table: str,
+            on: Optional[Expression] = None,
+            join_type: str = JoinType.INNER,
+            schema: Optional[str] = None,
+            alias: Optional[str] = None,
     ) -> "Query":
         """
         Add a JOIN clause.
@@ -261,57 +282,58 @@ class Query:
         return self
 
     def left_join(
-        self,
-        table: str,
-        on: Optional[Expression] = None,
-        schema: Optional[str] = None,
-        alias: Optional[str] = None,
+            self,
+            table: str,
+            on: Optional[Expression] = None,
+            schema: Optional[str] = None,
+            alias: Optional[str] = None,
     ) -> "Query":
         """Add a LEFT JOIN clause."""
         return self.join(table, on, JoinType.LEFT, schema, alias)
 
     def right_join(
-        self,
-        table: str,
-        on: Optional[Expression] = None,
-        schema: Optional[str] = None,
-        alias: Optional[str] = None,
+            self,
+            table: str,
+            on: Optional[Expression] = None,
+            schema: Optional[str] = None,
+            alias: Optional[str] = None,
     ) -> "Query":
         """Add a RIGHT JOIN clause."""
         return self.join(table, on, JoinType.RIGHT, schema, alias)
 
     def inner_join(
-        self,
-        table: str,
-        on: Optional[Expression] = None,
-        schema: Optional[str] = None,
-        alias: Optional[str] = None,
+            self,
+            table: str,
+            on: Optional[Expression] = None,
+            schema: Optional[str] = None,
+            alias: Optional[str] = None,
     ) -> "Query":
         """Add an INNER JOIN clause."""
         return self.join(table, on, JoinType.INNER, schema, alias)
 
     def full_join(
-        self,
-        table: str,
-        on: Optional[Expression] = None,
-        schema: Optional[str] = None,
-        alias: Optional[str] = None,
+            self,
+            table: str,
+            on: Optional[Expression] = None,
+            schema: Optional[str] = None,
+            alias: Optional[str] = None,
     ) -> "Query":
         """Add a FULL JOIN clause."""
         return self.join(table, on, JoinType.FULL, schema, alias)
 
     def cross_join(
-        self, table: str, schema: Optional[str] = None, alias: Optional[str] = None
+            self, table: str, schema: Optional[str] = None, alias: Optional[str] = None
     ) -> "Query":
         """Add a CROSS JOIN clause."""
         return self.join(table, None, JoinType.CROSS, schema, alias)
 
-    def where(self, condition: Expression) -> "Query":
+    def where(self, condition: Expression | List[Expression], operator: str = 'and') -> "Query":
         """
         Add a WHERE clause condition.
 
         Args:
             condition: Boolean expression for filtering
+            operator: Logical operator to combine conditions ('and' or 'or')
 
         Returns:
             Query: Self for method chaining
@@ -320,9 +342,14 @@ class Query:
             self._where_clause = condition
         else:
             # Combine with existing condition using AND
-            from .expressions import and_
+            from .expressions import and_, or_
 
-            self._where_clause = and_(self._where_clause, condition)
+            if operator == "and":
+                self._where_clause = and_(self._where_clause, condition)
+            elif operator == "or":
+                self._where_clause = or_(self._where_clause, condition)
+            else:
+                raise ValueError(f"Unsupported operator: {operator}. Use 'and' or 'or'.")
 
         return self
 
@@ -360,7 +387,7 @@ class Query:
         return self
 
     def order_by(
-        self, column: Union[str, Expression], direction: str = OrderDirection.ASC
+            self, column: Union[str, Expression], direction: str = OrderDirection.ASC
     ) -> "Query":
         """
         Add a column to the ORDER BY clause.
@@ -552,16 +579,19 @@ class Query:
 
         from_items = []
 
-        # Main table
-        range_var = ast.RangeVar(
-            relname=self._from_clause.name,
-            schemaname=self._from_clause.schema,
-            alias=ast.Alias(aliasname=self._from_clause.alias)
-            if self._from_clause.alias
-            else None,
-            inh=True,  # Include inheritance (removes ONLY keyword)
-        )
-        from_items.append(range_var)
+        if isinstance(self._from_clause, TableReference):
+            # Main table
+            range_var = ast.RangeVar(
+                relname=self._from_clause.name,
+                schemaname=self._from_clause.schema,
+                alias=ast.Alias(aliasname=self._from_clause.alias)
+                if self._from_clause.alias
+                else None,
+                inh=True,  # Include inheritance (removes ONLY keyword)
+            )
+            from_items.append(range_var)
+        elif isinstance(self._from_clause, RangeSubselect):
+            from_items.append(self._from_clause)
 
         # Add joins
         for join_type, table_ref, condition in self._joins:
@@ -640,10 +670,10 @@ class Query:
         return f"${self._parameter_counter}"
 
     async def execute(
-        self,
-        pool: asyncpg.Pool,
-        connection: Optional[asyncpg.Connection] = None,
-        model_class: Optional[type] = None,
+            self,
+            pool: asyncpg.Pool,
+            connection: Optional[asyncpg.Connection] = None,
+            model_class: Optional[type] = None,
     ) -> QueryResult:
         """
         Execute the query and return results.
@@ -676,10 +706,10 @@ class Query:
         )
 
     async def execute_one(
-        self,
-        pool: asyncpg.Pool,
-        connection: Optional[asyncpg.Connection] = None,
-        model_class: Optional[type] = None,
+            self,
+            pool: asyncpg.Pool,
+            connection: Optional[asyncpg.Connection] = None,
+            model_class: Optional[type] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Execute the query and return the first result.
@@ -804,7 +834,7 @@ class InsertQuery:
         return self
 
     def on_conflict_do_update(
-        self, conflict_columns: List[str], **update_values: Any
+            self, conflict_columns: List[str], **update_values: Any
     ) -> "InsertQuery":
         """
         Add ON CONFLICT DO UPDATE clause.
@@ -893,10 +923,10 @@ class InsertQuery:
         )
 
     async def execute(
-        self,
-        pool: asyncpg.Pool,
-        connection: Optional[asyncpg.Connection] = None,
-        model_class: Optional[type] = None,
+            self,
+            pool: asyncpg.Pool,
+            connection: Optional[asyncpg.Connection] = None,
+            model_class: Optional[type] = None,
     ) -> QueryResult:
         """
         Execute the INSERT query.
@@ -956,7 +986,7 @@ class UpdateQuery:
     """
 
     def __init__(
-        self, table: str, schema: Optional[str] = None, alias: Optional[str] = None
+            self, table: str, schema: Optional[str] = None, alias: Optional[str] = None
     ):
         self.table = TableReference(table, schema, alias)
         self._set_clauses: List[Tuple[str, Any]] = []
@@ -995,12 +1025,12 @@ class UpdateQuery:
         return self
 
     def join(
-        self,
-        table: str,
-        on: Optional[Expression] = None,
-        join_type: str = JoinType.INNER,
-        schema: Optional[str] = None,
-        alias: Optional[str] = None,
+            self,
+            table: str,
+            on: Optional[Expression] = None,
+            join_type: str = JoinType.INNER,
+            schema: Optional[str] = None,
+            alias: Optional[str] = None,
     ) -> "UpdateQuery":
         """
         Add a JOIN clause to the UPDATE.
@@ -1139,10 +1169,10 @@ class UpdateQuery:
         )
 
     async def execute(
-        self,
-        pool: asyncpg.Pool,
-        connection: Optional[asyncpg.Connection] = None,
-        model_class: Optional[type] = None,
+            self,
+            pool: asyncpg.Pool,
+            connection: Optional[asyncpg.Connection] = None,
+            model_class: Optional[type] = None,
     ) -> QueryResult:
         """
         Execute the UPDATE query.
@@ -1202,7 +1232,7 @@ class DeleteQuery:
     """
 
     def __init__(
-        self, table: str, schema: Optional[str] = None, alias: Optional[str] = None
+            self, table: str, schema: Optional[str] = None, alias: Optional[str] = None
     ):
         self.table = TableReference(table, schema, alias)
         self._using: List[TableReference] = []
@@ -1212,7 +1242,7 @@ class DeleteQuery:
         self._parameter_counter = 0
 
     def using(
-        self, table: str, schema: Optional[str] = None, alias: Optional[str] = None
+            self, table: str, schema: Optional[str] = None, alias: Optional[str] = None
     ) -> "DeleteQuery":
         """
         Add a USING clause (PostgreSQL-specific).
@@ -1336,10 +1366,10 @@ class DeleteQuery:
         )
 
     async def execute(
-        self,
-        pool: asyncpg.Pool,
-        connection: Optional[asyncpg.Connection] = None,
-        model_class: Optional[type] = None,
+            self,
+            pool: asyncpg.Pool,
+            connection: Optional[asyncpg.Connection] = None,
+            model_class: Optional[type] = None,
     ) -> QueryResult:
         """
         Execute the DELETE query.

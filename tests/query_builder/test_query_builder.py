@@ -2,13 +2,9 @@
 Tests for the query builder module.
 """
 
-from unittest.mock import Mock, AsyncMock
-
-import pytest
-
-from pghatch.query_builder import Query, col, func, literal, and_, or_, not_
-from pghatch.query_builder.builder import select, select_all
-from pghatch.query_builder.types import QueryResult
+from pghatch.query import Query, col, func, literal, and_, or_, not_
+from pghatch.query.builder import select, select_all
+from pghatch.query.builder.types import QueryResult
 
 
 def test_simple_select():
@@ -469,7 +465,7 @@ def test_cte_with_joins():
 
 def test_cte_with_parameters():
     """Test CTE with parameterized queries."""
-    from pghatch.query_builder import param
+    from pghatch.query import param
 
     # CTE with parameters
     cte_query = Query()
@@ -577,7 +573,7 @@ def test_nested_subqueries():
 
 def test_subqueries_with_parameters():
     """Test subqueries using parameterized values."""
-    from pghatch.query_builder import param
+    from pghatch.query import param
 
     # Subquery with parameters
     recent_orders_subquery = Query()

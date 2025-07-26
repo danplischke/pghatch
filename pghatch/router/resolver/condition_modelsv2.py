@@ -41,7 +41,7 @@ def create_exists_condition_model(
 ) -> type[BaseModel]:
     return create_model(
         f"{table_name}{to_pascal(field)}ExistsCondition",
-        condition_type=Literal["ExistsCondition"],
+        operator=Literal["exists"],
         field=Literal[field],
         value=(py_type, ...),
     )
@@ -52,7 +52,7 @@ def create_equal_condition_model(
 ) -> type[BaseModel]:
     return create_model(
         f"{table_name}{to_pascal(field)}EqualCondition",
-        condition_type=Literal["EqualCondition"],
+        operator=Literal["="],
         field=Literal[field],
         value=py_type | None,
     )
@@ -63,7 +63,7 @@ def create_not_equal_condition_model(
 ) -> type[BaseModel]:
     return create_model(
         f"{table_name}{to_pascal(field)}NotEqualCondition",
-        condition_type=Literal["NotEqualCondition"],
+        operator=Literal["!="],
         field=Literal[field],
         value=py_type | None,
     )
@@ -74,7 +74,7 @@ def create_less_than_condition_model(
 ) -> type[BaseModel]:
     return create_model(
         f"{table_name}{to_pascal(field)}LessThanCondition",
-        condition_type=Literal["LessThanCondition"],
+        operator=Literal["<"],
         field=Literal[field],
         value=(py_type, ...),
     )
@@ -85,7 +85,7 @@ def create_greater_than_condition_model(
 ) -> type[BaseModel]:
     return create_model(
         f"{table_name}{to_pascal(field)}GreaterThanCondition",
-        condition_type=Literal["GreaterThanCondition"],
+        operator=Literal[">"],
         field=Literal[field],
         value=(py_type, ...),
     )
@@ -96,7 +96,7 @@ def create_like_condition_model(
 ) -> type[BaseModel]:
     return create_model(
         f"{table_name}{to_pascal(field)}LikeCondition",
-        condition_type=Literal["LikeCondition"],
+        operator=Literal["like"],
         field=Literal[field],
         value=(py_type, ...),
     )
@@ -107,7 +107,7 @@ def create_ilike_condition_model(
 ) -> type[BaseModel]:
     return create_model(
         f"{table_name}{to_pascal(field)}ILikeCondition",
-        condition_type=Literal["ILikeCondition"],
+        operator=Literal["ilike"],
         field=Literal[field],
         value=(py_type, ...),
     )
@@ -118,7 +118,7 @@ def create_in_condition_model(
 ) -> type[BaseModel]:
     return create_model(
         f"{table_name}{to_pascal(field)}InCondition",
-        condition_type=Literal["InCondition"],
+        operator=Literal["in"],
         field=Literal[field],
         values=(List[py_type], ...),
     )
@@ -129,7 +129,7 @@ def create_not_in_condition_model(
 ) -> type[BaseModel]:
     return create_model(
         f"{table_name}{to_pascal(field)}NotInCondition",
-        condition_type=Literal["NotInCondition"],
+        operator=Literal["not in"],
         field=Literal[field],
         values=(List[py_type], ...),
     )
@@ -140,7 +140,7 @@ def create_is_null_condition_model(
 ) -> type[BaseModel]:
     return create_model(
         f"{table_name}{to_pascal(field)}IsNullCondition",
-        condition_type=Literal["IsNullCondition"],
+        operator=Literal["is null"],
         field=Literal[field]
     )
 
@@ -151,7 +151,7 @@ def create_is_not_null_condition_model(
     return create_model(
         f"{table_name}{to_pascal(field)}IsNotNullCondition",
         field=Literal[field],
-        condition_type=Literal["IsNotNullCondition"],
+        operator=Literal["is not null"],
     )
 
 
@@ -295,12 +295,14 @@ def get_and_or_condition_models(table_view_name: str, condition_models: List[typ
     and_model_name = f"{table_view_name}AndCondition"
     and_model = create_model(
         and_model_name,
+        operator=Literal["or"],
         conditions=(Union[*condition_models, and_model_name], ...),
     )
 
     or_model_name = f"{table_view_name}OrCondition"
     or_model = create_model(
         or_model_name,
+        operator=Literal["or"],
         conditions=(Union[*condition_models, or_model_name], ...),
     )
 
@@ -334,14 +336,14 @@ def get_conditions_for_attribute(table_view_name: str, attr: PgAttribute, intros
     typ = attr.get_py_type_not_nullable(introspection)
     field_name = attr.attname
     is_nullable = attr.is_nullable()
-    print(attr.attname)
+
     match attr.get_type(introspection).typcategory:
         case "A":
             return get_array_condition_models(table_view_name, typ, field_name, is_nullable)
         case "B":
             return get_boolean_condition_models(table_view_name, typ, field_name, is_nullable)
         case "C":
-            return []
+            return list()
         case "D":
             return get_datetime_condition_models(table_view_name, typ, field_name, is_nullable)
         case "E":
@@ -353,7 +355,7 @@ def get_conditions_for_attribute(table_view_name: str, attr: PgAttribute, intros
         case "N":
             return get_numeric_condition_models(table_view_name, typ, field_name, is_nullable)
         case "P":
-            raise NotImplementedError()
+            return list()
         case "R":
             return get_range_condition_models(table_view_name, typ, field_name, is_nullable)
         case "S":
@@ -361,11 +363,11 @@ def get_conditions_for_attribute(table_view_name: str, attr: PgAttribute, intros
         case "T":
             return get_timespan_condition_models(table_view_name, typ, field_name, is_nullable)
         case "U":
-            raise NotImplementedError()
+            return list()
         case "V":
             return get_bitstring_condition_models(table_view_name, typ, field_name, is_nullable)
         case "X":
-            raise NotImplementedError()
+            return list()
     return list()
 
 
@@ -374,7 +376,7 @@ def create_field_condition_models(
         attr: PgAttribute,
         introspection: Introspection
 ):
-    discriminator = Field(discriminator='operator')
+    discriminator = Field(discriminator='field')
     conditions = get_conditions_for_attribute(table_view_name, attr, introspection)
 
     return Annotated[Union[*conditions], discriminator]
@@ -396,7 +398,7 @@ def create_table_view_condition_model(table_view_oid: str, introspection: Intros
     and_model, or_model = get_and_or_condition_models(table_view_name, conditions)
     return create_model(
         f"{table_view_name}Condition",
-        where=Union[*conditions, and_model, or_model],
+        where=Annotated[Union[*conditions, and_model, or_model], Field(discriminator='operator')],
         order_by=(str, None),
         limit=(int, None),
         offset=(int, None),

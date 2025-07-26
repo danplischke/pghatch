@@ -6,6 +6,7 @@ services:
   postgres:
     image: postgres:latest
     container_name: postgres_container
+    command: postgres -c 'work_mem=5GB' -c 'shared_buffers=5GB'
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres

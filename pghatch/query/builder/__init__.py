@@ -6,13 +6,12 @@ using the native PostgreSQL AST via pglast.
 """
 
 from .builder import Query
-from .expressions import col, func, literal, param, and_, or_, not_
-from .types import QueryResult, ExecutionContext
+from pghatch.query.builder.expressions import col, literal, param, and_, or_, not_
+from pghatch.query.builder.types import QueryResult, ExecutionContext
 
 __all__ = [
     "Query",
     "col",
-    "func",
     "literal",
     "param",
     "and_",

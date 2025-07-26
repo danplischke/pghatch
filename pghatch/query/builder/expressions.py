@@ -11,7 +11,7 @@ from pglast import ast
 from pglast.enums import BoolExprType, A_Expr_Kind, NullTestType, SubLinkType
 
 if TYPE_CHECKING:
-    from pghatch.query_builder import Query
+    from pghatch.query import Query
 
 
 class Parameter:
@@ -169,14 +169,14 @@ class FunctionExpression(Expression):
     """Expression representing a function call."""
 
     def __init__(
-        self,
-        name: str,
-        args: List[Union[Expression, Any]] | None = None,
-        schema: Optional[str] = None,
-        distinct: bool = False,
-        agg_filter: Optional[Expression] = None,
-        agg_order: Optional[List[str]] = None,
-        agg_star: Optional[bool] = False,
+            self,
+            name: str,
+            args: List[Union[Expression, Any]] | None = None,
+            schema: Optional[str] = None,
+            distinct: bool = False,
+            agg_filter: Optional[Expression] = None,
+            agg_order: Optional[List[str]] = None,
+            agg_star: Optional[bool] = False,
     ):
         self.name = name
         self.schema = schema
@@ -193,6 +193,8 @@ class FunctionExpression(Expression):
             for arg in args:
                 if isinstance(arg, Expression):
                     arg_nodes.append(arg.node)
+                elif isinstance(arg, ast.Node):
+                    arg_nodes.append(arg)
                 else:
                     arg_nodes.append(_value_to_node(arg))
 
@@ -333,6 +335,11 @@ def and_(*expressions: Expression) -> Expression:
     return result
 
 
+def case() -> "CaseExpression":
+    """CASE expression builder."""
+    return CaseExpression()
+
+
 def or_(*expressions: Expression) -> Expression:
     """Combine expressions with OR."""
     if len(expressions) == 0:
@@ -353,158 +360,6 @@ def not_(expression: Expression) -> Expression:
     """Negate an expression with NOT."""
     node = ast.BoolExpr(boolop=BoolExprType.NOT_EXPR, args=[expression.node])
     return Expression(node)
-
-
-class FunctionRegistry:
-    """Registry of PostgreSQL functions with type-safe builders."""
-
-    @staticmethod
-    def count(
-        expr: Optional[Union[Expression, str]] = None, distinct: bool = False
-    ) -> FunctionExpression:
-        """COUNT aggregate function."""
-        if expr is None or expr == "*":
-            # COUNT(*)
-            return FunctionExpression("count", None, agg_star=True, distinct=distinct)
-        elif isinstance(expr, str):
-            args = [col(expr)]
-        else:
-            args = [expr]
-        return FunctionExpression("count", args, distinct=distinct)
-
-    @staticmethod
-    def sum(expr: Union[Expression, str], distinct: bool = False) -> FunctionExpression:
-        """SUM aggregate function."""
-        args = [col(expr) if isinstance(expr, str) else expr]
-        return FunctionExpression("sum", args, distinct=distinct)
-
-    @staticmethod
-    def avg(expr: Union[Expression, str], distinct: bool = False) -> FunctionExpression:
-        """AVG aggregate function."""
-        args = [col(expr) if isinstance(expr, str) else expr]
-        return FunctionExpression("avg", args, distinct=distinct)
-
-    @staticmethod
-    def max(expr: Union[Expression, str]) -> FunctionExpression:
-        """MAX aggregate function."""
-        args = [col(expr) if isinstance(expr, str) else expr]
-        return FunctionExpression("max", args)
-
-    @staticmethod
-    def min(expr: Union[Expression, str]) -> FunctionExpression:
-        """MIN aggregate function."""
-        args = [col(expr) if isinstance(expr, str) else expr]
-        return FunctionExpression("min", args)
-
-    @staticmethod
-    def upper(expr: Union[Expression, str]) -> FunctionExpression:
-        """UPPER string function."""
-        args = [col(expr) if isinstance(expr, str) else expr]
-        return FunctionExpression("upper", args)
-
-    @staticmethod
-    def lower(expr: Union[Expression, str]) -> FunctionExpression:
-        """LOWER string function."""
-        args = [col(expr) if isinstance(expr, str) else expr]
-        return FunctionExpression("lower", args)
-
-    @staticmethod
-    def length(expr: Union[Expression, str]) -> FunctionExpression:
-        """LENGTH string function."""
-        args = [col(expr) if isinstance(expr, str) else expr]
-        return FunctionExpression("length", args)
-
-    @staticmethod
-    def coalesce(*exprs: Union[Expression, str, Any]) -> FunctionExpression:
-        """COALESCE function."""
-        args = []
-        for expr in exprs:
-            if isinstance(expr, str):
-                args.append(col(expr))
-            elif isinstance(expr, Expression):
-                args.append(expr)
-            else:
-                args.append(literal(expr))
-        return FunctionExpression("coalesce", args)
-
-    @staticmethod
-    def date_trunc(precision: str, expr: Union[Expression, str]) -> FunctionExpression:
-        """DATE_TRUNC function."""
-        args = [literal(precision), col(expr) if isinstance(expr, str) else expr]
-        return FunctionExpression("date_trunc", args)
-
-    @staticmethod
-    def now() -> FunctionExpression:
-        """NOW() function."""
-        return FunctionExpression("now", [])
-
-    @staticmethod
-    def current_timestamp() -> FunctionExpression:
-        """CURRENT_TIMESTAMP function."""
-        return FunctionExpression("current_timestamp", [])
-
-    @staticmethod
-    def case() -> "CaseExpression":
-        """CASE expression builder."""
-        return CaseExpression()
-
-    @staticmethod
-    def concat(*exprs: Union[Expression, str, Any]) -> FunctionExpression:
-        """CONCAT function."""
-        args = []
-        for expr in exprs:
-            if isinstance(expr, str):
-                args.append(literal(expr))
-            elif isinstance(expr, Expression):
-                args.append(expr)
-            else:
-                args.append(literal(expr))
-        return FunctionExpression("concat", args)
-
-    @staticmethod
-    def json_extract_path_text(
-        json_expr: Union[Expression, str], *path_elements: str
-    ) -> FunctionExpression:
-        """JSON_EXTRACT_PATH_TEXT function."""
-        args = [col(json_expr) if isinstance(json_expr, str) else json_expr]
-        for path in path_elements:
-            args.append(literal(path))
-        return FunctionExpression("json_extract_path_text", args)
-
-    @staticmethod
-    def jsonb_extract_path_text(
-        json_expr: Union[Expression, str], *path_elements: str
-    ) -> FunctionExpression:
-        """JSONB_EXTRACT_PATH_TEXT function."""
-        args = [col(json_expr) if isinstance(json_expr, str) else json_expr]
-        for path in path_elements:
-            args.append(literal(path))
-        return FunctionExpression("jsonb_extract_path_text", args)
-
-    @staticmethod
-    def row_number() -> FunctionExpression:
-        """ROW_NUMBER() window function."""
-        return FunctionExpression("row_number", [])
-
-    @staticmethod
-    def array_length(
-        array_expr: Union[Expression, str], dimension: int = 1
-    ) -> FunctionExpression:
-        """ARRAY_LENGTH function."""
-        args = [
-            col(array_expr) if isinstance(array_expr, str) else array_expr,
-            literal(dimension),
-        ]
-        return FunctionExpression("array_length", args)
-
-    @staticmethod
-    def rank() -> FunctionExpression:
-        """RANK() window function."""
-        return FunctionExpression("rank", [])
-
-
-# Create a global function registry instance
-func = FunctionRegistry()
 
 
 def _create_comparison(left: Expression, operator: str, right: Any) -> Expression:
