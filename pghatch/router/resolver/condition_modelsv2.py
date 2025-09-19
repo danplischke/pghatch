@@ -1,4 +1,5 @@
 from typing import List, Union, Annotated, Literal
+from enum import Enum
 
 from pydantic import BaseModel, create_model, Field
 from pydantic.alias_generators import to_pascal
@@ -8,32 +9,57 @@ from pghatch.introspection.tables import PgAttribute
 from pghatch.utils.model_registry import create_model
 
 
-def create_range_condition_model(
-        table_name: str, field: str, py_type: type
-) -> type[BaseModel]:
-    return create_model(
-        f"{table_name}{to_pascal(field)}RangeCondition",
-        condition_type=Literal["RangeCondition"],
-        field=Literal[field],
-        lower_bound=(py_type, None),
-        upper_bound=(py_type, None),
-        include_lower=(bool, True),
-        include_upper=(bool, True),
-    )
+class Condition(BaseModel):
+    operator: str
 
 
-def create_not_range_condition_model(
-        table_name: str, field: str, py_type: type
-) -> type[BaseModel]:
-    return create_model(
-        f"{table_name}{to_pascal(field)}NotRangeCondition",
-        condition_type=Literal["NotRangeCondition"],
-        field=Literal[field],
-        lower_bound=(py_type, None),
-        upper_bound=(py_type, None),
-        include_lower=(bool, True),
-        include_upper=(bool, True),
-    )
+class Operators(str, Enum):
+    AND = "and"
+    OR = "or"
+    NOT = "not"
+    EQUAL = "="
+    NOT_EQUAL = "!="
+    LESS_THAN = "<"
+    GREATER_THAN = ">"
+    LESS_THAN_EQUAL = "<="
+    GREATER_THAN_EQUAL = ">="
+    LIKE = "like"
+    ILIKE = "ilike"
+    IN = "in"
+    NOT_IN = "not in"
+    IS_NULL = "is null"
+    IS_NOT_NULL = "is not null"
+    EXISTS = "exists"
+
+
+
+# def create_range_condition_model(
+#         table_name: str, field: str, py_type: type
+# ) -> type[BaseModel]:
+#     return create_model(
+#         f"{table_name}{to_pascal(field)}RangeCondition",
+#         __base__=RangeCondition,
+#         condition_type=Literal["RangeCondition"],
+#         field=Literal[field],
+#         lower_bound=(py_type, None),
+#         upper_bound=(py_type, None),
+#         include_lower=(bool, True),
+#         include_upper=(bool, True),
+#     )
+
+#
+# def create_not_range_condition_model(
+#         table_name: str, field: str, py_type: type
+# ) -> type[BaseModel]:
+#     return create_model(
+#         f"{table_name}{to_pascal(field)}NotRangeCondition",
+#         condition_type=Literal["NotRangeCondition"],
+#         field=Literal[field],
+#         lower_bound=(py_type, None),
+#         upper_bound=(py_type, None),
+#         include_lower=(bool, True),
+#         include_upper=(bool, True),
+#     )
 
 
 def create_exists_condition_model(
@@ -41,6 +67,7 @@ def create_exists_condition_model(
 ) -> type[BaseModel]:
     return create_model(
         f"{table_name}{to_pascal(field)}ExistsCondition",
+        __base__=Condition,
         operator=Literal["exists"],
         field=Literal[field],
         value=(py_type, ...),
@@ -120,7 +147,7 @@ def create_in_condition_model(
         f"{table_name}{to_pascal(field)}InCondition",
         operator=Literal["in"],
         field=Literal[field],
-        values=(List[py_type], ...),
+        value=(List[py_type], ...),
     )
 
 
@@ -131,7 +158,7 @@ def create_not_in_condition_model(
         f"{table_name}{to_pascal(field)}NotInCondition",
         operator=Literal["not in"],
         field=Literal[field],
-        values=(List[py_type], ...),
+        value=(List[py_type], ...),
     )
 
 
@@ -357,7 +384,8 @@ def get_conditions_for_attribute(table_view_name: str, attr: PgAttribute, intros
         case "P":
             return list()
         case "R":
-            return get_range_condition_models(table_view_name, typ, field_name, is_nullable)
+            return list()
+            # return get_range_condition_models(table_view_name, typ, field_name, is_nullable)
         case "S":
             return get_string_condition_models(table_view_name, typ, field_name, is_nullable)
         case "T":
@@ -376,9 +404,10 @@ def create_field_condition_models(
         attr: PgAttribute,
         introspection: Introspection
 ):
-    discriminator = Field(discriminator='field')
+    discriminator = Field(discriminator='operator')
     conditions = get_conditions_for_attribute(table_view_name, attr, introspection)
-
+    if len(conditions) == 0:
+        return None
     return Annotated[Union[*conditions], discriminator]
 
 
@@ -390,7 +419,9 @@ def create_table_view_condition_model(table_view_oid: str, introspection: Intros
     for attr in introspection.get_attributes(table_view_oid):
         if attr.attisdropped or attr.attnum <= 0:
             continue
-        conditions.extend(get_conditions_for_attribute(table_view_name, attr, introspection))
+        field_cond = create_field_condition_models(table_view_name, attr, introspection)
+        if field_cond:
+            conditions.append(field_cond)
 
     if len(conditions) == 0:
         return None
@@ -398,8 +429,10 @@ def create_table_view_condition_model(table_view_oid: str, introspection: Intros
     and_model, or_model = get_and_or_condition_models(table_view_name, conditions)
     return create_model(
         f"{table_view_name}Condition",
-        where=Annotated[Union[*conditions, and_model, or_model], Field(discriminator='operator')],
-        order_by=(str, None),
+        columns=(List[str], None),
+        where=(Union[*conditions, and_model, or_model], None),
+        order_by=(List[tuple[str, Literal["desc", "asc"]]], None),
         limit=(int, None),
         offset=(int, None),
+        total=(bool, True),
     )

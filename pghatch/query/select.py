@@ -1,83 +1,129 @@
+from _ast import Expression
+
 from pydantic import BaseModel
-from sqlalchemy import Column
 
 from pghatch.introspection.introspection import make_introspection_query
 from pghatch.query.builder import Query
 from pghatch.query.builder.builder import select
-from pghatch.query.builder.expressions import ResTargetExpression, ColumnExpression, FunctionExpression, Parameter
+from pghatch.query.builder.expressions import ColumnExpression, _Parameter
+from pghatch.query.builder.expressions import or_, and_
 from pghatch.query.builder.functions import json_build_object, json_agg, count
-from pghatch.query.builder.expressions import or_, and_,
+from pghatch.router.resolver.condition_modelsv2 import Condition
 
 
-def get_condition_operation(condition: BaseModel, table_alias: str = None) -> ColumnExpression | None:
-    if condition.operator == '=':
-        return ColumnExpression(condition.field, table_alias).eq(Parameter(condition.value))
+def get_condition_operation(query: Query, condition: Condition, table_alias: str = None) -> Expression | None:
+    match condition.operator:
+        case "=":
+            return ColumnExpression(condition.field, table_alias).eq(query.param(condition.value))
+        case "<":
+            return ColumnExpression(condition.field, table_alias).lt(query.param(condition.value))
+        case "<=":
+            return ColumnExpression(condition.field, table_alias).le(query.param(condition.value))
+        case ">":
+            return ColumnExpression(condition.field, table_alias).gt(query.param(condition.value))
+        case ">=":
+            return ColumnExpression(condition.field, table_alias).ge(query.param(condition.value))
+        case "like":
+            return ColumnExpression(condition.field, table_alias).like(query.param(condition.value))
+        case "ilike":
+            return ColumnExpression(condition.field, table_alias).ilike(query.param(condition.value))
+        case "in":
+            return ColumnExpression(condition.field, table_alias).in_(query.param(condition.value))
+        case "not in":
+            return ColumnExpression(condition.field, table_alias).nin(query.param(condition.value))
+        case "is null":
+            return ColumnExpression(condition.field, table_alias).is_null()
+        case "is not null":
+            return ColumnExpression(condition.field, table_alias).is_not_null()
+        case _:
+            return None
 
 
-def add_condition(condition: BaseModel, query: Query) -> Query:
+def add_condition(condition: Condition, query: Query) -> Query:
     if condition.operator == "and" or condition.operator == "or":
         conditions = [sub_condition for sub_condition in condition.conditions if sub_condition is not None]
         if condition.operator == "and":
             query.where(and_(*conditions))
         else:
             query.where(or_(*conditions))
-
     else:
-        query.where(get_condition_operation(condition))
+        operation = get_condition_operation(query, condition)
+        if operation is not None:
+            query.where(operation)
+        else:
+            raise ValueError(f"Unsupported operator: {condition.operator}")
 
     return query
 
 
+def add_conditions(conditions: list[Condition], query: Query) -> Query:
+    for condition in conditions:
+        query = add_condition(condition, query)
+    return query
+
+
 def select_table(
-        oid: str,
-        introspection,
-        attr_selection: list[str] | None = None,
+        name: str,
+        schema: str,
+        existing_columns: list[str],
+        column_selection: list[str] | None = None,
         include_result_count: bool = False,
-        condition: BaseModel | None = None,
-) -> tuple[str, list[str], type, type[BaseModel] | None]:
+        conditions: list[Condition] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        order_by: list[tuple[str, str]] | None = None,
+) -> tuple[str, list[str]]:
     table_counter = 0
-    table = introspection.get_class(oid)
     table_alias = f"table_{table_counter}"
     q = Query()
 
-    existing_columns = introspection.get_attributes(oid)
-    existing_columns = [col.attname for col in existing_columns]
-
-    if attr_selection is not None:
-        if not all(attr in existing_columns for attr in attr_selection):
+    if column_selection is not None:
+        if not all(attr in existing_columns for attr in column_selection):
             raise ValueError(
-                f"Some attributes {attr_selection} do not exist in table with OID {oid}."
+                f"Some attributes {column_selection} do not exist in table {name}."
             )
     else:
-        attr_selection = existing_columns
+        column_selection = existing_columns
 
-    selection = [(attr, ColumnExpression(attr, table_alias)) for attr in attr_selection]
+    selection = [(attr, ColumnExpression(attr, table_alias)) for attr in column_selection]
     flattened_selection = [el for sublist in selection for el in sublist]
 
     q = q.select(json_build_object(
         *flattened_selection
-    ))
+    ).as_("result"))
 
-    q = q.from_(table.relname, schema=table.get_namespace(introspection).nspname, alias=table_alias)
+    q = q.from_(name, schema=schema, alias=table_alias)
+    if conditions:
+        q = add_conditions(conditions=conditions, query=q)
+    if limit:
+        q = q.limit(limit)
+    if offset:
+        q = q.offset(offset)
+    if order_by:
+        for col, direction in order_by:
+            if col not in existing_columns:
+                raise ValueError(f"Order by column {col} does not exist in table {name}.")
+            if direction.lower() not in ("asc", "desc"):
+                raise ValueError(f"Order by direction must be 'asc' or 'desc', got '{direction}'.")
+            q = q.order_by(ColumnExpression(col, table_alias), direction.upper())
 
+
+    table_counter += 1
+    sub_alias = f"subquery_{table_counter}"
     # Add conditions if needed
     expr = list()
     if include_result_count:
         expr.extend(
-            ['total', count(table_alias)]
+            ['total', count(sub_alias)]
         )
 
-    table_counter += 1
-    sub_alias = f"subquery_{table_counter}"
+
     final = select(json_build_object(
         'result', json_agg(
-            ColumnExpression(sub_alias),
+            ColumnExpression("result", sub_alias),
         ),
         *expr
-    )).from_subquery(q, sub_alias)
-
-    if condition is not None:
-        if condition.operator == '=':
+    ).as_("result")).from_subquery(q, sub_alias)
 
     return final.build()
 
@@ -106,6 +152,7 @@ if __name__ == '__main__':
                 "16388",
                 introspection,
                 attr_selection=['name', 'syns2'],
+                include_result_count=True,
             )
 
             print(build)

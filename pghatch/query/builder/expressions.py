@@ -11,17 +11,7 @@ from pglast import ast
 from pglast.enums import BoolExprType, A_Expr_Kind, NullTestType, SubLinkType
 
 if TYPE_CHECKING:
-    from pghatch.query import Query
-
-
-class Parameter:
-    """Represents a parameterized value for safe SQL injection prevention."""
-
-    def __init__(self, name: str):
-        self.name = name
-
-    def __repr__(self):
-        return f"Parameter({self.name!r})"
+    from pghatch.query.builder import Query
 
 
 class Expression:
@@ -47,17 +37,25 @@ class Expression:
         return ResTargetExpression(self.node, alias)
 
 
+class _Parameter(Expression):
+
+    def __init__(self, placeholder: int, value: Any):
+        super().__init__(ast.ParamRef(number=placeholder))
+        self.value = value
+        self.placeholder = placeholder
+
+
 class ColumnExpression(Expression):
     """Expression representing a column reference."""
 
-    def __init__(self, name: str | Parameter, table_alias: Optional[str] = None):
+    def __init__(self, name: str | _Parameter, table_alias: Optional[str] = None):
         # Build the AST node
         fields = []
         if table_alias:
             fields.append(ast.String(sval=table_alias))
 
-        if isinstance(name, Parameter):
-            fields.append(ast.String(sval=name.name))
+        if isinstance(name, _Parameter):
+            fields.append(ast.String(sval=name.placeholder))
         elif isinstance(name, str):
             if name == "*":
                 # Handle SELECT *
@@ -111,15 +109,23 @@ class ColumnExpression(Expression):
         """Create a greater-than-or-equal comparison."""
         return _create_comparison(self, ">=", value)
 
-    def like(self, pattern: str) -> "Expression":
+    def nlike(self, pattern: str | _Parameter) -> "Expression":
+        """Create a NOT LIKE comparison."""
+        return _create_comparison(self, "not like", pattern)
+
+    def like(self, pattern: str | _Parameter) -> "Expression":
         """Create a LIKE comparison."""
-        return _create_comparison(self, "~~", pattern)
+        return _create_comparison(self, "like", pattern)
 
-    def ilike(self, pattern: str) -> "Expression":
+    def ilike(self, pattern: str | _Parameter) -> "Expression":
         """Create an ILIKE comparison."""
-        return _create_comparison(self, "~~*", pattern)
+        return _create_comparison(self, "ilike", pattern)
 
-    def in_(self, values: Union[List[Any], "Query", "Parameter"]) -> "Expression":
+    def nlike(self, pattern: str | _Parameter) -> "Expression":
+        """Create a NOT LIKE comparison."""
+        return _create_comparison(self, "not ilike", pattern)
+
+    def in_(self, values: Union[List[Any], "Query", _Parameter]) -> "Expression":
         """Create an IN comparison."""
         from .builder import Query
 
@@ -129,7 +135,7 @@ class ColumnExpression(Expression):
                 subselect=values.query_ast(),
                 testexpr=self.node,
             )
-        elif isinstance(values, Parameter):
+        elif isinstance(values, _Parameter):
             # If it's a parameter, we treat it as a single value
             node = ast.A_Expr(
                 kind=A_Expr_Kind.AEXPR_IN,
@@ -145,6 +151,37 @@ class ColumnExpression(Expression):
             node = ast.A_Expr(
                 kind=A_Expr_Kind.AEXPR_IN,
                 name=[ast.String(sval="=")],
+                lexpr=self.node,
+                rexpr=value_nodes,
+            )
+        return Expression(node)
+
+    def nin(self, values: Union[List[Any], "Query", "_Parameter"]) -> "Expression":
+        """Create a NOT IN comparison."""
+        from .builder import Query
+
+        if isinstance(values, Query):
+            node = ast.SubLink(
+                subLinkType=SubLinkType.ALL_SUBLINK,
+                subselect=values.query_ast(),
+                testexpr=self.node,
+            )
+        elif isinstance(values, _Parameter):
+            # If it's a parameter, we treat it as a single value
+            node = ast.A_Expr(
+                kind=A_Expr_Kind.AEXPR_NOT_IN,
+                name=[ast.String(sval="<>")],
+                lexpr=self.node,
+                rexpr=_value_to_node(values.name),
+            )
+        else:
+            # List of values - wrap in a list structure that pglast can handle
+            value_nodes = [_value_to_node(v) for v in values]
+
+            # Create a proper list expression for NOT IN clause
+            node = ast.A_Expr(
+                kind=A_Expr_Kind.AEXPR_NOT_IN,
+                name=[ast.String(sval="<>")],
                 lexpr=self.node,
                 rexpr=value_nodes,
             )
@@ -294,7 +331,7 @@ class LiteralExpression(Expression):
         super().__init__(node)
 
 
-def col(name: str | Parameter, table_alias: Optional[str] = None) -> ColumnExpression:
+def col(name: str | _Parameter, table_alias: Optional[str] = None) -> ColumnExpression:
     """Create a column reference expression."""
     return ColumnExpression(name, table_alias)
 
@@ -302,21 +339,6 @@ def col(name: str | Parameter, table_alias: Optional[str] = None) -> ColumnExpre
 def literal(value: Any) -> LiteralExpression:
     """Create a literal value expression."""
     return LiteralExpression(value)
-
-
-def param(value: Any) -> Parameter:
-    """Create a parameterized value for safe SQL injection prevention.
-
-    Args:
-        value: The value to parameterize
-
-    Returns:
-        Parameter: A parameter object that will be safely bound server-side
-
-    Example:
-        qb.where(col("name").eq(param("John")))  # Safe from SQL injection
-    """
-    return Parameter(value)
 
 
 def and_(*expressions: Expression) -> Expression:
@@ -391,10 +413,8 @@ def _value_to_node(value: Any, query_builder: Optional["Query"] = None) -> ast.N
         return ast.A_Const(val=ast.String(sval=value))
     elif isinstance(value, Expression):
         return value.node
-    elif isinstance(value, Parameter):
-        # For now, just use the literal value since parameter handling
-        # needs more sophisticated implementation
-        return _value_to_node(value.name)
+    elif isinstance(value, _Parameter):
+        return value.node
     else:
         # For other types, convert to string
         return ast.A_Const(val=ast.String(sval=str(value)))

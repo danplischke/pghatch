@@ -1,15 +1,14 @@
 import asyncio
 import json
 import typing
-from typing import Annotated
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter
 from pglast.ast import ResTarget
-from pglast.enums import LimitOption
 from pydantic import Field, create_model, BaseModel
 from pydantic.alias_generators import to_camel
 
 from pghatch.introspection.introspection import Introspection, make_introspection_query
+from pghatch.query.select import select_table
 from pghatch.router.resolver.condition_modelsv2 import create_table_view_condition_model
 from pghatch.router.resolver.resolver import Resolver
 
@@ -61,12 +60,19 @@ class TableViewResolver(Resolver):
                 Field(introspection.get_description(introspection.PG_CLASS, typ.oid)),
             )
         typ = self.cls.relkind
+
+        table_result_type = create_model(
+                to_camel(self.name),
+                **field_definitions,
+            )
+
         return (
             typ,
             fields,
             create_model(
-                to_camel(self.name),
-                **field_definitions,
+                f"{to_camel(self.name)}_result",
+                total=(int, None),
+                result=typing.List[table_result_type]
             ),
             create_table_view_condition_model(self.oid, introspection)
         )
@@ -90,27 +96,30 @@ class TableViewResolver(Resolver):
             description=f"Fetches data from the table or view {self.schema}.{self.name}.",
         )
 
-    async def resolve(self, input_args: BaseModel):
-        from pglast.ast import SelectStmt, A_Const, Integer, RangeVar
+    async def resolve(self, input_args: BaseModel | None):
         from pglast.stream import RawStream
 
-        select_stmt = SelectStmt(
-            targetList=[ResTarget(name=attr) for attr in self.fields],
-            fromClause=[
-                RangeVar(
-                    relname=self.name,
-                    schemaname=self.schema,
-                    inh=True,
-                    relpersistence=self.type,
-                )
-            ]
+        stmt, params = select_table(
+            name=self.name,
+            schema=self.schema,
+            existing_columns=self.fields,
+            column_selection=input_args.columns if input_args and hasattr(input_args, "columns") else None,
+            include_result_count=input_args.total if input_args and hasattr(input_args, "total") else False,
+            conditions=input_args.where if input_args and hasattr(input_args, "where") else None,
+            limit=input_args.limit if input_args and hasattr(input_args, "limit") else None,
+            offset=input_args.offset if input_args and hasattr(input_args, "offset") else None,
+            order_by=input_args.order_by if input_args and hasattr(input_args, "order_by") else None,
         )
 
-        sql = RawStream()(select_stmt)
+
+        sql = RawStream()(stmt)
         async with self.router._pool.acquire() as conn:
             values = await conn.fetch(sql)
 
-        return [self.return_type(**dict(row)) for row in values]
+        values: asyncpg.Record = next(iter(values))
+        result = values.get("result")
+        result = json.loads(result)
+        return self.return_type(**result)
 
 
 if __name__ == "__main__":

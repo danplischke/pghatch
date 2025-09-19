@@ -17,15 +17,14 @@ from .expressions import (
     Expression,
     FunctionExpression,
     ResTargetExpression,
-    Parameter,
-    ColumnExpression,
+    ColumnExpression, _Parameter,
 )
 from .types import QueryResult, TableReference, JoinType, OrderDirection
 
 
 def select(
         *columns: Union[
-            str, Expression, FunctionExpression, Parameter, ResTargetExpression
+            str, Expression, FunctionExpression, _Parameter, ResTargetExpression
         ],
 ) -> "Query":
     """
@@ -128,10 +127,24 @@ class Query:
         self._parameters: List[Any] = []
         self._parameter_counter = 0
 
+
+    def param(self, value: Any) -> "_Parameter":
+        """
+        Create a parameter for use in the query.
+
+        Args:
+            value: Value to bind as a parameter
+
+        Returns:
+            _Parameter: Parameter object with placeholder
+        """
+        placeholder = self._add_parameter(value)
+        return _Parameter(placeholder, value)
+
     def select(
             self,
             *columns: Union[
-                str, Expression, FunctionExpression, Parameter, ResTargetExpression
+                str, Expression, FunctionExpression, _Parameter, ResTargetExpression
             ],
     ) -> "Query":
         """
@@ -149,11 +162,11 @@ class Query:
                     ResTargetExpression(ColumnExpression(column).node)
                 )
 
-            elif isinstance(column, Parameter):
+            elif isinstance(column, _Parameter):
                 # Parameter object
-                self._add_parameter(column.value)
+
                 self._select_list.append(
-                    ResTargetExpression(ast.ParamRef(number=self._parameter_counter))
+                    ResTargetExpression(ast.ParamRef(number=column.placeholder))
                 )
             elif isinstance(column, (Expression, FunctionExpression)):
                 # Expression or function
@@ -663,11 +676,11 @@ class Query:
         }
         return mapping.get(join_type, PgJoinType.JOIN_INNER)
 
-    def _add_parameter(self, value: Any) -> str:
+    def _add_parameter(self, value: Any) -> int:
         """Add a parameter and return its placeholder."""
         self._parameter_counter += 1
         self._parameters.append(value)
-        return f"${self._parameter_counter}"
+        return self._parameter_counter
 
     async def execute(
             self,
