@@ -118,8 +118,9 @@ class TableViewResolver(Resolver):
 
         values: asyncpg.Record = next(iter(values))
         result = values.get("result")
-        result = json.loads(result)
-        return self.return_type(**result)
+        return result
+        # result = json.loads(result)
+        # return self.return_type(**result)
 
 
 if __name__ == "__main__":
