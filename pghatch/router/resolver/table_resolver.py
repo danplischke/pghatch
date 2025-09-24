@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from pglast.ast import ResTarget
 from pydantic import Field, create_model, BaseModel
 from pydantic.alias_generators import to_camel
+from starlette.responses import JSONResponse, Response
 
 from pghatch.introspection.introspection import Introspection, make_introspection_query
 from pghatch.query.select import select_table
@@ -91,7 +92,7 @@ class TableViewResolver(Resolver):
             f"/{self.schema}/{self.name}",
             _resolve,
             methods=["POST"],
-            response_model=typing.List[self.return_type],
+            response_model=self.return_type,
             summary=f"Get data from {self.schema}.{self.name}",
             description=f"Fetches data from the table or view {self.schema}.{self.name}.",
         )
@@ -118,7 +119,10 @@ class TableViewResolver(Resolver):
 
         values: asyncpg.Record = next(iter(values))
         result = values.get("result")
-        return result
+        return Response(
+            result,
+            media_type="application/json",
+        )
         # result = json.loads(result)
         # return self.return_type(**result)
 

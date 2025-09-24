@@ -155,11 +155,7 @@ def _get_composite_type(
 
     relation = introspection.get_class(typ.typrelid)
     if relation is None:
-        if typ.typname == "tsvector":
-            return str
-        raise ValueError(
-            f"Relation for type {typ.typname} not found in introspection data."
-        )
+        return str
 
     attrs = relation.get_attributes(introspection)
     field_definitions = {}
